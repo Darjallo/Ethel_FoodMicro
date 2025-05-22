@@ -18,6 +18,7 @@
 #
 import importlib
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class FlowManagerRequestHandler(BaseHTTPRequestHandler):
@@ -34,13 +35,22 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
             return
 
         flow_name = req_json.get("flow")
-        context = req_json.get("context", {})
+        context = req_json.get("context")
+        session = req_json.get("session")
+        query = req_json.get("query", {})
+
         stream = req_json.get("stream", False)
 
         if not flow_name:
             self.send_response(400)
             self.end_headers()
             self.wfile.write(b'{"error": "Missing flow parameter"}')
+            return
+
+        if not re.match(r'^[A-Za-z0-9_]+$', flow_name):
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b'{"error": "Invalid flow name"}')
             return
 
         # Dynamically import the flow
@@ -58,7 +68,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Transfer-Encoding', 'chunked')
                 self.end_headers()
-                for chunk in flow_module.run(context, stream=True):
+                for chunk in flow_module.run(context, session, query, stream=True):
                     if isinstance(chunk, dict):
                         chunk = json.dumps(chunk)
                     chunk_bytes = (chunk + "\n").encode("utf-8")
@@ -68,7 +78,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
                     self.wfile.flush()
                 self.wfile.write(b"0\r\n\r\n")
             else:
-                result = flow_module.run(context, stream=False)
+                result = flow_module.run(context, session, query, stream=False)
                 resp = json.dumps(result).encode()
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
