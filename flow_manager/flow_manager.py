@@ -19,7 +19,16 @@
 import importlib
 import json
 import re
+import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # Loads from .env by default
+
+ssl_port = os.getenv("SSL_PORT")
+ssl_cert = os.getenv("SSL_CERT_PATH")
+ssl_key = os.getenv("SSL_KEY_PATH")
 
 class FlowManagerRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -90,11 +99,22 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode())
 
-def run_server(port=8000):
+def run_server(port=8000, certfile=None, keyfile=None):
     server = ThreadingHTTPServer(("0.0.0.0", port), FlowManagerRequestHandler)
-    print(f"Flow manager listening on port {port}")
+    if certfile and keyfile:
+        # Wrap the socket with SSL
+        server.socket = ssl.wrap_socket(
+            server.socket,
+            certfile=certfile,
+            keyfile=keyfile,
+            server_side=True,
+        )
+        protocol = "https"
+    else:
+        protocol = "http"
+    print(f"Flow manager listening on {protocol}://0.0.0.0:{port}")
     server.serve_forever()
 
+# Usage
 if __name__ == "__main__":
-    run_server()
-
+    run_server(port=ssl_port, certfile=ssl_cert, keyfile=ssl_key)
