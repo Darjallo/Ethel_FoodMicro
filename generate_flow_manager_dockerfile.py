@@ -24,6 +24,9 @@ dockerfile_lines = [
     "COPY flow_manager/requirements.txt .",
     "RUN pip install --no-cache-dir -r requirements.txt",
     "",
+    "COPY flow_manager/flow_manager.py flow_manager.py",
+    "COPY flow_manager/flows flows/",
+    ""
 ]
 
 for src, dest in adapter_files:

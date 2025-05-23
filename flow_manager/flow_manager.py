@@ -21,12 +21,9 @@ import json
 import re
 import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from dotenv import load_dotenv
 import os
 
-load_dotenv()  # Loads from .env by default
-
-ssl_port = os.getenv("SSL_PORT")
+ssl_port = int(os.getenv("SSL_PORT", "8000"))
 ssl_cert = os.getenv("SSL_CERT_PATH")
 ssl_key = os.getenv("SSL_KEY_PATH")
 

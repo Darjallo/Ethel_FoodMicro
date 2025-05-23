@@ -4,6 +4,8 @@ WORKDIR /app
 COPY agent_pool/base_agent_server.py agent_pool/base_agent_server.py
 COPY agent_pool/agents/test_agent/ agent_pool/agents/test_agent/
 
+ENV PYTHONPATH=/app
+
 WORKDIR /app/agent_pool/agents/test_agent
 
 CMD ["python", "agent.py"]

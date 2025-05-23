@@ -1,0 +1,34 @@
+version: "3.9"
+
+services:
+  flow_manager:
+    image: flow_manager:latest
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+    ports:
+      - "8000:8000" 
+    volumes:
+      - /etc/letsencrypt/fullchain.pem:/run/certs/fullchain.pem:ro
+      - /etc/letsencrypt/privkey.pem:/run/certs/privkey.pem:ro
+    environment:
+      - SSL_CERT_PATH=/run/certs/fullchain.pem
+      - SSL_KEY_PATH=/run/certs/privkey.pem
+      - SSL_PORT=8000
+
+  test_agent:
+    image: test_agent:latest
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+
+networks:
+  ethel_net:
+    driver: overlay
+
