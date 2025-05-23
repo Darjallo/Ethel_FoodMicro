@@ -16,8 +16,17 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-from langgraph.graph import StateGraph
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
 from .nodes import test_agent_node
+
+# Define the state schema using TypedDict
+class TestFlowState(TypedDict):
+    context: dict
+    session: str
+    query: dict
+    stream: bool
+    test_agent_result: dict
 
 def run(context, session=None, query=None, stream=False):
     """
@@ -33,14 +42,17 @@ def run(context, session=None, query=None, stream=False):
         "stream": stream
     }
 
-    # Build the graph
-    graph = StateGraph()
+    # Build the graph with the defined state schema
+    graph_builder = StateGraph(TestFlowState)
     # Register the node
-    graph.add_node("test_agent", test_agent_node)
-    # Add edges (here, only one node, so just entry)
-    graph.set_entry_point("test_agent")
+    graph_builder.add_node("test_agent", test_agent_node)
+    # Define the execution flow
+    graph_builder.add_edge(START, "test_agent")
+    graph_builder.add_edge("test_agent", END)
+    # Compile the graph
+    app = graph_builder.compile()
     # Run the flow
-    result_state = graph.run(state)
+    result_state = app.invoke(state)
     # Return the result produced by the node (what agent returned)
     return result_state.get("test_agent_result")
 

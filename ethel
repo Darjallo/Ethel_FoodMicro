@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Check if exactly one argument is provided
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 [up|down|ps|flush]"
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 [up|down|ps|flush|log] {service_name}"
     exit 1
 fi
 
@@ -24,6 +24,10 @@ case $1 in
         echo "Restarting everything..."
         systemctl restart docker
         ;;
+    log)
+	echo "Log for ethelstack_$2"
+        docker service logs ethelstack_$2
+	;;
     *)
         echo "Invalid argument: $1"
         echo "Usage: $0 [up|down|ps|flush]"

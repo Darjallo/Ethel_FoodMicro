@@ -22,6 +22,8 @@ import re
 import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
+import traceback
+
 
 ssl_port = int(os.getenv("SSL_PORT", "8000"))
 ssl_cert = os.getenv("SSL_CERT_PATH")
@@ -62,7 +64,10 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         # Dynamically import the flow
         try:
             flow_module = importlib.import_module(f"flows.{flow_name}")
-        except ImportError:
+        except Exception as e:
+            print("Trying to import flow:", flow_name, flush=True)
+            print(f"ImportError: {e}", flush=True)
+            traceback.print_exc()
             self.send_response(404)
             self.end_headers()
             self.wfile.write(json.dumps({"error": f"No such flow '{flow_name}'"}).encode())
@@ -92,6 +97,9 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(resp)
         except Exception as e:
+            print("==== INTERNAL SERVER ERROR ====")
+            print(str(e))
+            traceback.print_exc()  # <-- This prints the traceback to stdout/logs
             self.send_response(500)
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode())
@@ -99,13 +107,9 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
 def run_server(port=8000, certfile=None, keyfile=None):
     server = ThreadingHTTPServer(("0.0.0.0", port), FlowManagerRequestHandler)
     if certfile and keyfile:
-        # Wrap the socket with SSL
-        server.socket = ssl.wrap_socket(
-            server.socket,
-            certfile=certfile,
-            keyfile=keyfile,
-            server_side=True,
-        )
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile, keyfile)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
         protocol = "https"
     else:
         protocol = "http"
