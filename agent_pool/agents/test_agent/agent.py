@@ -20,6 +20,7 @@
 
 from datetime import datetime
 from agent_pool.base_agent_server import run_server
+import time
 
 class TestAgent:
     def handle(self, request_json):
@@ -29,9 +30,12 @@ class TestAgent:
         return response
 
     def stream(self, request_json):
-        # Streaming: Just yield "Processed at [datetime]"
+        # Streaming: yield text fragments, e.g., char by char or word by word
         msg = f"Processed at {datetime.now().isoformat()}"
-        yield {"message": msg}
+        # Example: word-by-word streaming (like OpenAI's tokens)
+        for word in msg.split():
+            yield word + " "
+            time.sleep(1) 
 
 if __name__ == "__main__":
     run_server(port=8000, handler_instance=TestAgent())

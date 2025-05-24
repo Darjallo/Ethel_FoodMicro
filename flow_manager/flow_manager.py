@@ -24,7 +24,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import traceback
 
-
 ssl_port = int(os.getenv("SSL_PORT", "8000"))
 ssl_cert = os.getenv("SSL_CERT_PATH")
 ssl_key = os.getenv("SSL_KEY_PATH")
@@ -46,7 +45,6 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         context = req_json.get("context")
         session = req_json.get("session")
         query = req_json.get("query", {})
-
         stream = req_json.get("stream", False)
 
         if not flow_name:
@@ -65,7 +63,6 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         try:
             flow_module = importlib.import_module(f"flows.{flow_name}")
         except Exception as e:
-            print("Trying to import flow:", flow_name, flush=True)
             print(f"ImportError: {e}", flush=True)
             traceback.print_exc()
             self.send_response(404)
@@ -76,20 +73,41 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         try:
             if stream:
                 self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Type', 'text/event-stream')
                 self.send_header('Transfer-Encoding', 'chunked')
                 self.end_headers()
                 for chunk in flow_module.run(context, session, query, stream=True):
                     if isinstance(chunk, dict):
                         chunk = json.dumps(chunk)
-                    chunk_bytes = (chunk + "\n").encode("utf-8")
+                    chunk = f"data: {chunk}\n\n"
+                    chunk_bytes = chunk.encode("utf-8")
                     self.wfile.write(b"%X\r\n" % len(chunk_bytes))
                     self.wfile.write(chunk_bytes)
                     self.wfile.write(b"\r\n")
                     self.wfile.flush()
+                # End of stream, as OpenAI does
+                done_bytes = b"data: [DONE]\n\n"
+                self.wfile.write(b"%X\r\n" % len(done_bytes))
+                self.wfile.write(done_bytes)
+                self.wfile.write(b"\r\n")
                 self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
             else:
                 result = flow_module.run(context, session, query, stream=False)
+                # Always expect a generator, per your new policy
+                # Exhaust it and get first item (or list, if you prefer)
+                if hasattr(result, "__iter__") and not isinstance(result, dict) and not isinstance(result, list):
+                    # Exhaust generator
+                    result_items = list(result)
+                    if len(result_items) == 1:
+                        result = result_items[0]
+                    elif len(result_items) == 0:
+                        self.send_response(204)  # No content
+                        self.end_headers()
+                        return
+                    else:
+                        # More than one item? You decide: here, return the list
+                        result = result_items
                 resp = json.dumps(result).encode()
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
@@ -97,9 +115,9 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(resp)
         except Exception as e:
-            print("==== INTERNAL SERVER ERROR ====")
-            print(str(e))
-            traceback.print_exc()  # <-- This prints the traceback to stdout/logs
+            print("==== INTERNAL SERVER ERROR ====", flush=True)
+            print(str(e), flush=True)
+            traceback.print_exc()
             self.send_response(500)
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode())
@@ -116,6 +134,6 @@ def run_server(port=8000, certfile=None, keyfile=None):
     print(f"Flow manager listening on {protocol}://0.0.0.0:{port}")
     server.serve_forever()
 
-# Usage
 if __name__ == "__main__":
     run_server(port=ssl_port, certfile=ssl_cert, keyfile=ssl_key)
+

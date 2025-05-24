@@ -38,21 +38,20 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         stream = req_json.get("stream", False)
         if stream and hasattr(self.business_logic, "stream"):
             self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Transfer-Encoding', 'chunked')
             self.end_headers()
             # Write streamed chunks using HTTP chunked transfer
             for chunk in self.business_logic.stream(req_json):
-                # Accept either dict (json) or str
-                if isinstance(chunk, dict):
-                    chunk = json.dumps(chunk)
-                chunk_bytes = (chunk + "\n").encode("utf-8")
-                # Write chunk size in hex, then the chunk, then CRLF
+                # Convert everything to string, just in case
+                if not isinstance(chunk, str):
+                    chunk = str(chunk)
+                chunk_bytes = chunk.encode("utf-8")
                 self.wfile.write(b"%X\r\n" % len(chunk_bytes))
                 self.wfile.write(chunk_bytes)
                 self.wfile.write(b"\r\n")
                 self.wfile.flush()
-            self.wfile.write(b"0\r\n\r\n")  # End of chunks
+            self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
         else:
             result = self.business_logic.handle(req_json)

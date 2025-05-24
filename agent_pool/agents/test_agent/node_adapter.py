@@ -17,12 +17,14 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 #
-
 import requests
+import json
 
 def test_agent_node(state):
     """
-    Calls the test_agent microservice.
+    Calls the test_agent microservice and streams response if requested.
+    This node ALWAYS yields (never returns), so it is compatible with LangGraph
+    whether the flow is streaming or not.
     """
     payload = {
         "context": state.get("context"),
@@ -32,7 +34,23 @@ def test_agent_node(state):
     }
     payload = {k: v for k, v in payload.items() if v is not None}
     url = "http://test_agent:8000/"
-    resp = requests.post(url, json=payload, timeout=5)
-    resp.raise_for_status()
-    return {"test_agent_result": resp.json()}
+
+    if payload.get("stream"):
+        # Streaming mode: yield partial responses as they come in
+        resp = requests.post(url, json=payload, stream=True, timeout=30)
+        resp.raise_for_status()
+        for chunk in resp.iter_content(chunk_size=None):
+            if chunk:
+                # Try to decode JSON, fallback to string if not JSON
+                try:
+                    data = json.loads(chunk.decode("utf-8"))
+                except Exception:
+                    data = chunk.decode("utf-8")
+                yield {"test_agent_result": data}
+    else:
+        # Non-streaming: yield just once
+        resp = requests.post(url, json=payload, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        yield {"test_agent_result": data}
 

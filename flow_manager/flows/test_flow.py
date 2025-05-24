@@ -32,27 +32,31 @@ def run(context, session=None, query=None, stream=False):
     """
     Entry point for the test_flow.
     context, session, query: user data
-    stream: if True, expects agent to stream (but here just calls node)
+    stream: if True, yields updates as they are produced by the agent node.
     """
-    # Prepare the initial state for the flow
+    print("run called with stream =", stream, flush=True)
+
     state = {
         "context": context,
         "session": session,
         "query": query,
         "stream": stream
     }
-
-    # Build the graph with the defined state schema
+    print("Initial state:", state, flush=True)
     graph_builder = StateGraph(TestFlowState)
-    # Register the node
     graph_builder.add_node("test_agent", test_agent_node)
-    # Define the execution flow
     graph_builder.add_edge(START, "test_agent")
     graph_builder.add_edge("test_agent", END)
-    # Compile the graph
     app = graph_builder.compile()
-    # Run the flow
-    result_state = app.invoke(state)
-    # Return the result produced by the node (what agent returned)
-    return result_state.get("test_agent_result")
+
+    if stream:
+        # Yield each partial update (as dicts) from the LangGraph app's stream method
+        print("We are streaming", flush=True)
+        for update in app.stream(state):
+            yield update  # this will be a dict with "test_agent_result": ...
+    else:
+        # Even in non-streaming mode, always yield (never return)
+        result_state = app.invoke(state)
+        print("Result state:", result_state, flush=True)
+        yield result_state.get("test_agent_result")
 
