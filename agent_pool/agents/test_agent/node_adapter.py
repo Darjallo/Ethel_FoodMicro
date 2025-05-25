@@ -17,81 +17,46 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 import requests
-import json
 
 def test_agent_node(state):
     """
-    Streams JSON‐chunks from test_agent, extracts single-character deltas,
-    yields {"test_agent_result":{"delta":<char>}} on each, then a final
-    {"test_agent_result":{"output":<full_text>,"result":<meta>}}.
+    Calls the test_agent microservice, streams per-char deltas,
+    then yields the final result.
     """
+    url = "http://test_agent:8000/"
     payload = {
         "context": state.get("context"),
         "session": state.get("session"),
-        "query":   state.get("query"),
-        "stream":  state.get("stream", False)
+        "query": state.get("query"),
+        "stream": state.get("stream", False)
     }
-    payload = {k: v for k, v in payload.items() if v is not None}
-    url = "http://test_agent:8000/"
 
-    if payload.get("stream", False):
+    if payload["stream"]:
+        # 1) side-channel: get per-char streaming
         resp = requests.post(url, json=payload, stream=True, timeout=60)
         resp.raise_for_status()
 
-        full_text = ""
-        buffer = ""
-        decoder = json.JSONDecoder()
-
-        for chunk in resp.iter_content(chunk_size=None):
-            if not chunk:
+        full = []
+        # read raw bytes (chars)
+        for byte in resp.iter_content(chunk_size=1):
+            if not byte:
                 continue
-            buffer += chunk.decode("utf-8", errors="replace")
-            # pull out as many complete JSON objects as we can
-            while True:
-                try:
-                    obj, idx = decoder.raw_decode(buffer)
-                except ValueError:
-                    break
-                buffer = buffer[idx:].lstrip()
-                # extract the new token
-                delta = (
-                    obj
-                    .get("choices", [{}])[0]
-                    .get("delta", {})
-                    .get("content", "")
-                )
-                if delta:
-                    # yield single-character deltas
-                    for c in delta:
-                        full_text += c
-                        yield {"test_agent_result": {"delta": c}}
+            ch = byte.decode("utf-8", errors="replace")
+            full.append(ch)
+            yield {"test_agent_result": {"delta": ch}}
 
-        # stream done, now fetch the full metadata
-        meta_resp = requests.post(
-            url,
-            json={**payload, "stream": False},
-            timeout=10
-        )
-        meta_resp.raise_for_status()
-        meta = meta_resp.json()
-
-        # final yield: the assembled text plus metadata
+        # 2) once done, fetch the non-streaming JSON for metadata
+        meta = requests.post(url, json={**payload, "stream": False}, timeout=10).json()
         yield {
             "test_agent_result": {
-                "output": full_text,
+                "output": "".join(full),
                 "result": meta
             }
         }
 
     else:
-        # non-streaming: just do one-shot, no deltas
+        # non-streaming: just return final
         resp = requests.post(url, json=payload, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-        yield {
-            "test_agent_result": {
-                "output": "",
-                "result": data
-            }
-        }
+        yield {"test_agent_result": {"output": "", "result": resp.json()}}
 

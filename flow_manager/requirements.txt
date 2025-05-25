@@ -1,4 +1,1 @@
 langgraph
-langchain-core
-websockets
-requests

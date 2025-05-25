@@ -16,13 +16,7 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-import importlib
-import json
-import re
-import ssl
-import os
-import traceback
-
+import importlib, json, re, ssl, os, traceback, requests
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ssl_port = int(os.getenv("SSL_PORT", "8000"))
@@ -31,104 +25,76 @@ ssl_key  = os.getenv("SSL_KEY_PATH")
 
 class FlowManagerRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        # 1) parse & validate JSON
         length = int(self.headers.get("Content-Length", 0))
-        body   = self.rfile.read(length)
+        raw = self.rfile.read(length)
         try:
-            req = json.loads(body)
-        except json.JSONDecodeError:
-            return self._reply(400, {"error": "Invalid JSON"})
+            req = json.loads(raw)
+        except:
+            return self._error(400, {"error":"Invalid JSON"})
 
-        flow   = req.get("flow")
-        stream = req.get("stream", False)
-        if not flow or not re.fullmatch(r"[A-Za-z0-9_]+", flow):
-            return self._reply(400, {"error": "Missing or invalid flow name"})
-
-        # 2) import the flow module
+        flow = req.get("flow")
+        if not flow or not re.match(r"^[A-Za-z0-9_]+$", flow):
+            return self._error(400, {"error":"Bad flow"})
         try:
             mod = importlib.import_module(f"flows.{flow}")
         except ImportError:
-            return self._reply(404, {"error": f"No such flow '{flow}'"})
+            return self._error(404, {"error":f"No such flow '{flow}'"})
 
-        # 3) run in streaming or non-streaming mode
         try:
-            if stream:
-                self._handle_streaming(mod, req)
+            if req.get("stream"):
+                self._streaming(mod, req)
             else:
-                self._handle_nonstream(mod, req)
+                self._nonstream(mod, req)
         except Exception:
             traceback.print_exc()
-            self._reply(500, {"error": "Internal server error"})
+            self._error(500, {"error":"Internal error"})
 
-    def _handle_streaming(self, mod, req):
-        # begin chunked JSON
+    def _streaming(self, mod, req):
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Content-Type","application/json")
+        self.send_header("Transfer-Encoding","chunked")
         self.end_headers()
 
         for update in mod.run(
-            req.get("context"),
-            req.get("session"),
-            req.get("query", {}),
-            stream=True
+            req.get("context"), req.get("session"),
+            req.get("query",{}), stream=True
         ):
             chunk = (json.dumps(update) + "\n").encode("utf-8")
-            self._send_chunk(chunk)
+            self.wfile.write(f"{len(chunk):X}\r\n".encode() + chunk + b"\r\n")
+            self.wfile.flush()
 
-        # final zero-length chunk
-        self._send_chunk(b"", end=True)
-
-    def _handle_nonstream(self, mod, req):
-        # consume all yields, take the last one
-        last = None
-        for update in mod.run(
-            req.get("context"),
-            req.get("session"),
-            req.get("query", {}),
-            stream=False
-        ):
-            last = update
-
-        if last is None:
-            # nothing yielded → No Content
-            self.send_response(204)
-            self.end_headers()
-            return
-
-        data = json.dumps(last).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _reply(self, status: int, payload: dict):
-        b = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(b)))
-        self.end_headers()
-        self.wfile.write(b)
-
-    def _send_chunk(self, data: bytes, end: bool = False):
-        if end:
-            # terminator for chunked encoding
-            self.wfile.write(b"0\r\n\r\n")
-        else:
-            size = f"{len(data):X}\r\n".encode("utf-8")
-            self.wfile.write(size + data + b"\r\n")
+        # terminator
+        self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
 
-def run_server(port=8000, certfile=None, keyfile=None):
-    server = ThreadingHTTPServer(("0.0.0.0", port), FlowManagerRequestHandler)
-    if certfile and keyfile:
+    def _nonstream(self, mod, req):
+        gen = mod.run(
+            req.get("context"), req.get("session"),
+            req.get("query",{}), stream=False
+        )
+        first = next(gen, {})
+        body = json.dumps(first).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _error(self, code, obj):
+        self.send_response(code)
+        self.send_header("Content-Type","application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(obj).encode())
+
+def run_server():
+    server = ThreadingHTTPServer(("0.0.0.0", ssl_port), FlowManagerRequestHandler)
+    if ssl_cert and ssl_key:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(certfile, keyfile)
+        ctx.load_cert_chain(ssl_cert, ssl_key)
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
-    print(f"Flow manager listening on port {port}")
+    print(f"listening on port {ssl_port}")
     server.serve_forever()
 
-if __name__ == "__main__":
-    run_server(port=ssl_port, certfile=ssl_cert, keyfile=ssl_key)
+if __name__=="__main__":
+    run_server()
 
