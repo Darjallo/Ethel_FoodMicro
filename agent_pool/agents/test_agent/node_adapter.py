@@ -20,43 +20,53 @@ import requests
 
 def test_agent_node(state):
     """
-    Calls the test_agent microservice, streams per-char deltas,
-    then yields the final result.
+    Streams every character as soon as it comes in, then finally yields
+    the accumulated text + the full, non-streamed result for downstream.
     """
+    context = state.get("context")
+    session = state.get("session")
+    query   = state.get("query")
+    do_stream = state.get("stream", False)
     url = "http://test_agent:8000/"
-    payload = {
-        "context": state.get("context"),
-        "session": state.get("session"),
-        "query": state.get("query"),
-        "stream": state.get("stream", False)
-    }
 
-    if payload["stream"]:
-        # 1) side-channel: get per-char streaming
-        resp = requests.post(url, json=payload, stream=True, timeout=60)
+    if do_stream:
+        # 1) start streaming from agent, char-by-char
+        resp = requests.post(
+            url,
+            json={"context": context, "session": session, "query": query, "stream": True},
+            stream=True,
+            timeout=60
+        )
         resp.raise_for_status()
 
-        full = []
-        # read raw bytes (chars)
-        for byte in resp.iter_content(chunk_size=1):
-            if not byte:
+        full_output = ""
+        # CHUNK-SIZE=1 forces each incoming byte out immediately
+        for b in resp.iter_content(chunk_size=1):
+            if not b:
                 continue
-            ch = byte.decode("utf-8", errors="replace")
-            full.append(ch)
-            yield {"test_agent_result": {"delta": ch}}
+            ch = b.decode("utf-8", errors="replace")
+            full_output += ch
+            # yield each character immediately
+            yield {"test_agent_result": {"output": ch}}
 
-        # 2) once done, fetch the non-streaming JSON for metadata
-        meta = requests.post(url, json={**payload, "stream": False}, timeout=10).json()
-        yield {
-            "test_agent_result": {
-                "output": "".join(full),
-                "result": meta
-            }
-        }
+        # 2) once the stream is done, fetch the final structured response
+        final = requests.post(
+            url,
+            json={"context": context, "session": session, "query": query},
+            timeout=30
+        ).json()
+
+        # yield the full accumulated text plus the real result
+        yield {"test_agent_result": {"output": full_output, "result": final}}
 
     else:
-        # non-streaming: just return final
-        resp = requests.post(url, json=payload, timeout=10)
+        # non-stream: just one shot
+        resp = requests.post(
+            url,
+            json={"context": context, "session": session, "query": query},
+            timeout=30
+        )
         resp.raise_for_status()
-        yield {"test_agent_result": {"output": "", "result": resp.json()}}
+        data = resp.json()
+        yield {"test_agent_result": {"output": "", "result": data}}
 
