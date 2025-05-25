@@ -22,13 +22,7 @@
 
 from agent_pool.agents.test_agent.node_adapter import test_agent_node
 
-def livestream_control_node(state):
-    # Tell the flow‐manager: open side‐channel for the next node
-    next_node = state.get("next_livestream_node")
-    return {"livestream": next_node}
-
 NODES = {
-    "livestream_control": livestream_control_node,
     "test_agent": test_agent_node,
 }
 

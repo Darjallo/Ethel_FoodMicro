@@ -16,47 +16,46 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-
 # flow_manager/flows/test_flow.py
 
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
-from .nodes import livestream_control_node, test_agent_node
+from .nodes import test_agent_node
 
 class TestFlowState(TypedDict, total=False):
     context: dict
     session: str
     query: dict
     stream: bool
-    next_livestream_node: str
-
-    # only this key now—no more livestream_control!
-    livestream: str
-
+    # the node’s final JSON result goes here
     test_agent_result: dict
 
 def run(context, session=None, query=None, stream=False):
+    """
+    Entry point for the test_flow.
+    Always yields dicts, streaming if requested.
+    """
     state = {
         "context": context,
         "session": session,
         "query": query,
-        "stream": stream,
-        "next_livestream_node": "test_agent",
+        "stream": stream
     }
 
-    graph = StateGraph(TestFlowState)
-    graph.add_node("livestream_control", livestream_control_node)
-    graph.add_node("test_agent",         test_agent_node)
-    graph.add_edge(START,                "livestream_control")
-    graph.add_edge("livestream_control", "test_agent")
-    graph.add_edge("test_agent",         END)
-    app = graph.compile()
+    builder = StateGraph(TestFlowState)
+    builder.add_node("test_agent", test_agent_node)
+    builder.add_edge(START, "test_agent")
+    builder.add_edge("test_agent", END)
 
+    app = builder.compile()
+
+    # choose streaming vs. non-streaming
     if stream:
-        for update in app.stream(state):
-            yield update
+        iterator = app.stream(state)
     else:
-        # always yield, never return
-        result = app.invoke(state)
-        yield result
+        # wrap the single final result in a list so we can for-loop uniformly
+        iterator = iter([app.invoke(state)])
+
+    for update in iterator:
+        yield update
 

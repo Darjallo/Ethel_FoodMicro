@@ -29,23 +29,27 @@ resp = requests.post(URL, json=payload, timeout=60, verify=False, stream=True)
 resp.raise_for_status()
 print("Stream response from flow_manager:")
 
-full_text = ""
 for line in resp.iter_lines(decode_unicode=True):
-    if line:
-        try:
-            obj = json.loads(line)
-            print(f"[Control Message]: {json.dumps(obj, indent=2)}")
-            # Handle control messages or content appropriately here
-            if "livestream_control" in obj:
-                livestream_target = obj["livestream_control"].get("livestream")
-                print(f"[Livestream control]: {livestream_target}")
-            elif "test_agent" in obj:
-                result = obj["test_agent"]["test_agent_result"]
-                full_text += result
-                print(result, end="", flush=True)
-        except json.JSONDecodeError:
-            # This shouldn't occur with line-delimited JSON
-            print(f"[Malformed JSON]: {line}")
+    if not line:
+        continue
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        # shouldn't happen with JSON-delimited chunks
+        print(f"[Malformed JSON]: {line}")
+        continue
 
-print("\n\nFull streamed message:", full_text.strip())
+    # the streaming node now always lives under the flow's node name
+    node_payload = obj.get("test_agent", {}).get("test_agent_result", {})
+
+    # if it's a single character delta
+    if "delta" in node_payload:
+        print(node_payload["delta"], end="", flush=True)
+
+    # final, full output + metadata
+    elif "output" in node_payload and "result" in node_payload:
+        print("\n\n[Final output]:", node_payload["output"])
+        print("[Full metadata]:", json.dumps(node_payload["result"], indent=2))
+
+print()  # newline at end
 
