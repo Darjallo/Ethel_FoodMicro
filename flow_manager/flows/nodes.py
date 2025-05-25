@@ -18,15 +18,17 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 #
+# flow_manager/flows/nodes.py
+
 from agent_pool.agents.test_agent.node_adapter import test_agent_node
 
 def livestream_control_node(state):
-    # This node simply tells flow manager to stream next node directly
-    next_node_name = state.get("next_livestream_node")
-    return {"livestream": next_node_name}
+    # Tell the flow‐manager: open side‐channel for the next node
+    next_node = state.get("next_livestream_node")
+    return {"livestream": next_node}
 
 NODES = {
-    "test_agent": test_agent_node,
     "livestream_control": livestream_control_node,
+    "test_agent": test_agent_node,
 }
 
