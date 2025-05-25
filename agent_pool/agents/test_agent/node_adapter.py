@@ -18,13 +18,10 @@
 #
 #
 import requests
-import json
 
 def test_agent_node(state):
     """
-    Calls the test_agent microservice and streams response if requested.
-    This node ALWAYS yields (never returns), so it is compatible with LangGraph
-    whether the flow is streaming or not.
+    Streams every chunk as soon as it comes in, with no buffering.
     """
     payload = {
         "context": state.get("context"),
@@ -32,23 +29,16 @@ def test_agent_node(state):
         "query": state.get("query"),
         "stream": state.get("stream", False)
     }
-    payload = {k: v for k, v in payload.items() if v is not None}
     url = "http://test_agent:8000/"
 
     if payload.get("stream"):
-        # Streaming mode: yield partial responses as they come in
         resp = requests.post(url, json=payload, stream=True, timeout=30)
         resp.raise_for_status()
-        for chunk in resp.iter_content(chunk_size=None):
+        for chunk in resp.iter_content(chunk_size=1):  # get each byte as soon as it comes
             if chunk:
-                # Try to decode JSON, fallback to string if not JSON
-                try:
-                    data = json.loads(chunk.decode("utf-8"))
-                except Exception:
-                    data = chunk.decode("utf-8")
-                yield {"test_agent_result": data}
+                print("Received chunk:", repr(chunk))
+                yield {"test_agent_result": chunk.decode("utf-8", errors="replace")}
     else:
-        # Non-streaming: yield just once
         resp = requests.post(url, json=payload, timeout=5)
         resp.raise_for_status()
         data = resp.json()

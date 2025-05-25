@@ -19,11 +19,14 @@
 #
 #
 from agent_pool.agents.test_agent.node_adapter import test_agent_node
-# Later, add other imports for more agents
 
-# Optionally, you can build a registry/dictionary for programmatic access:
+def livestream_control_node(state):
+    # This node simply tells flow manager to stream next node directly
+    next_node_name = state.get("next_livestream_node")
+    return {"livestream": next_node_name}
+
 NODES = {
     "test_agent": test_agent_node,
-    # "other_agent": other_agent_node,
+    "livestream_control": livestream_control_node,
 }
 

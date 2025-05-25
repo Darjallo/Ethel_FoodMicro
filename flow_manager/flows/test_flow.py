@@ -18,45 +18,37 @@
 #
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
-from .nodes import test_agent_node
+from .nodes import test_agent_node, livestream_control_node
 
-# Define the state schema using TypedDict
-class TestFlowState(TypedDict):
+class TestFlowState(TypedDict, total=False):
     context: dict
     session: str
     query: dict
     stream: bool
+    livestream: str
     test_agent_result: dict
 
 def run(context, session=None, query=None, stream=False):
-    """
-    Entry point for the test_flow.
-    context, session, query: user data
-    stream: if True, yields updates as they are produced by the agent node.
-    """
-    print("run called with stream =", stream, flush=True)
-
     state = {
         "context": context,
         "session": session,
         "query": query,
-        "stream": stream
+        "stream": stream,
+        "next_livestream_node": "test_agent"  # explicitly indicate streaming node
     }
-    print("Initial state:", state, flush=True)
+
     graph_builder = StateGraph(TestFlowState)
+    graph_builder.add_node("livestream_control", livestream_control_node)
     graph_builder.add_node("test_agent", test_agent_node)
-    graph_builder.add_edge(START, "test_agent")
+    graph_builder.add_edge(START, "livestream_control")
+    graph_builder.add_edge("livestream_control", "test_agent")
     graph_builder.add_edge("test_agent", END)
     app = graph_builder.compile()
 
     if stream:
-        # Yield each partial update (as dicts) from the LangGraph app's stream method
-        print("We are streaming", flush=True)
         for update in app.stream(state):
-            yield update  # this will be a dict with "test_agent_result": ...
+            yield update
     else:
-        # Even in non-streaming mode, always yield (never return)
         result_state = app.invoke(state)
-        print("Result state:", result_state, flush=True)
-        yield result_state.get("test_agent_result")
+        yield result_state
 

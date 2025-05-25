@@ -1,57 +1,51 @@
 import requests
-import json
 import urllib3
-import warnings
+import json
 
-# Suppress InsecureRequestWarning for self-signed SSL
+# Suppress warnings for self-signed HTTPS certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-warnings.filterwarnings("ignore", category=UserWarning, module='urllib3')
 
-URL = "https://localhost:8000/"  # Adjust if needed
+URL = "https://localhost:8000/"
 
-def pretty(obj):
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
-
-# Non-streaming call
+print("Non-streaming test:\n-------------------")
 payload = {
     "flow": "test_flow",
     "context": {"message": "Hello World"}
 }
 
-try:
-    resp = requests.post(URL, json=payload, timeout=5, verify=False)
-    resp.raise_for_status()
-    print("Non-stream response from flow_manager:")
-    pretty(resp.json())
-except Exception as e:
-    print("Error in non-streaming request:", e)
-    print("Raw text:", getattr(resp, 'text', ''))
+resp = requests.post(URL, json=payload, timeout=5, verify=False)
+resp.raise_for_status()
+print("Non-stream response from flow_manager:")
+print(json.dumps(resp.json(), indent=2))
 
-print("\n================\n")
-
-# Streaming call
+print("\n================\nStreaming test:\n-------------------")
 payload = {
     "flow": "test_flow",
     "context": {"message": "Hello World again"},
     "stream": True
 }
 
-try:
-    resp = requests.post(URL, json=payload, timeout=10, verify=False, stream=True)
-    resp.raise_for_status()
-    print("Stream response from flow_manager:")
-    for raw in resp.iter_lines():
-        if not raw:
-            continue
+resp = requests.post(URL, json=payload, timeout=60, verify=False, stream=True)
+resp.raise_for_status()
+print("Stream response from flow_manager:")
+
+full_text = ""
+for line in resp.iter_lines(decode_unicode=True):
+    if line:
         try:
-            # Try to decode the chunk as JSON
-            data = json.loads(raw.decode("utf-8"))
-            print("Parsed:", end=" ")
-            pretty(data)
-        except Exception:
-            # If not JSON, just print as string for debugging
-            print("Raw line (not JSON):", raw.decode("utf-8"))
-except Exception as e:
-    print("Error in streaming request:", e)
-    print("Raw text:", getattr(resp, 'text', ''))
+            obj = json.loads(line)
+            print(f"[Control Message]: {json.dumps(obj, indent=2)}")
+            # Handle control messages or content appropriately here
+            if "livestream_control" in obj:
+                livestream_target = obj["livestream_control"].get("livestream")
+                print(f"[Livestream control]: {livestream_target}")
+            elif "test_agent" in obj:
+                result = obj["test_agent"]["test_agent_result"]
+                full_text += result
+                print(result, end="", flush=True)
+        except json.JSONDecodeError:
+            # This shouldn't occur with line-delimited JSON
+            print(f"[Malformed JSON]: {line}")
+
+print("\n\nFull streamed message:", full_text.strip())
 
