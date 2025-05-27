@@ -40,6 +40,9 @@ services:
     environment:
       TZ: "UTC"
       MILVUS_LOG_LEVEL: "warning"
+    networks:
+      - ethel_net
+
 
   mongodb:
     image: mongo:6.0
@@ -50,6 +53,9 @@ services:
       - mongo_data:/data/db
     environment:
       TZ: "UTC"
+    networks:
+      - ethel_net
+
 
 networks:
   ethel_net:

@@ -93,15 +93,16 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
 
         # required fields
         fileitem   = fs['file'] if 'file' in fs else None
-        course_id  = fs.getvalue('course_id')
+        collection  = fs.getvalue('collection')
         file_path  = fs.getvalue('path')
 
-        if not fileitem or not course_id or not file_path:
-            return self._error(400, {"error": "Fields 'file', 'course_id' and 'path' required"})
+# explicit None check for FieldStorage
+        if fileitem is None or not collection or not file_path:
+            return self._error(400, {"error": "Fields 'file', 'collection' and 'path' required"})
 
         # remove any existing versions
         existing = _mongo_db.fs.files.find({
-            "metadata.course_id": course_id,
+            "metadata.collection": collection,
             "metadata.path":      file_path
         })
         for doc in existing:
@@ -112,7 +113,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         new_id = _fs.put(
             data,
             filename=fileitem.filename,
-            metadata={"course_id": course_id, "path": file_path}
+            metadata={"collection": collection, "path": file_path}
         )
 
         resp = {"file_id": str(new_id)}
