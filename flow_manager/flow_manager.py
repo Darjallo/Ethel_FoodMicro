@@ -16,22 +16,40 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-import importlib
-import json
+# flow_manager/flow_manager.py
+
+import os
 import re
 import ssl
-import os
+import json
 import traceback
+import importlib
+import cgi
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pymongo import MongoClient
+import gridfs
 
 SSL_PORT = int(os.getenv("SSL_PORT", "8000"))
 SSL_CERT = os.getenv("SSL_CERT_PATH")
 SSL_KEY  = os.getenv("SSL_KEY_PATH")
 
+# Mongo settings (override with your env vars as needed)
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017")
+MONGO_DB  = os.getenv("MONGO_DB", "ethel_files")
+
+# initialize Mongo + GridFS
+_mongo_client = MongoClient(MONGO_URI)
+_mongo_db     = _mongo_client[MONGO_DB]
+_fs           = gridfs.GridFS(_mongo_db)
+
+
 class FlowManagerRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        # 1) parse + basic validation
+        if self.path == "/upload":
+            return self._handle_upload()
+
+        # --- otherwise: the normal / POST for flows ---
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length)
         try:
@@ -43,13 +61,11 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         if not flow or not re.fullmatch(r"[A-Za-z0-9_]+", flow):
             return self._error(400, {"error": "Missing or invalid flow name"})
 
-        # 2) import the flow
         try:
             mod = importlib.import_module(f"flows.{flow}")
         except ImportError:
             return self._error(404, {"error": f"No such flow '{flow}'"})
 
-        # 3) dispatch
         try:
             if req.get("stream"):
                 self._handle_streaming(mod, req)
@@ -59,21 +75,65 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self._error(500, {"error": "Internal server error"})
 
-    def _handle_streaming(self, mod, req):
-        # chunked JSON response
+    def _handle_upload(self):
+        """Handle multipart/form-data POST to /upload"""
+        ctype, pdict = cgi.parse_header(self.headers.get('Content-Type', ''))
+        if ctype != 'multipart/form-data':
+            return self._error(400, {"error": "Expected multipart/form-data"})
+
+        fs = cgi.FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                'REQUEST_METHOD':'POST',
+                'CONTENT_TYPE':self.headers['Content-Type'],
+            },
+            keep_blank_values=True
+        )
+
+        # required fields
+        fileitem   = fs['file'] if 'file' in fs else None
+        course_id  = fs.getvalue('course_id')
+        file_path  = fs.getvalue('path')
+
+        if not fileitem or not course_id or not file_path:
+            return self._error(400, {"error": "Fields 'file', 'course_id' and 'path' required"})
+
+        # remove any existing versions
+        existing = _mongo_db.fs.files.find({
+            "metadata.course_id": course_id,
+            "metadata.path":      file_path
+        })
+        for doc in existing:
+            _fs.delete(doc['_id'])
+
+        # read and store
+        data = fileitem.file.read()
+        new_id = _fs.put(
+            data,
+            filename=fileitem.filename,
+            metadata={"course_id": course_id, "path": file_path}
+        )
+
+        resp = {"file_id": str(new_id)}
+        body = json.dumps(resp).encode("utf-8")
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_streaming(self, mod, req):
+        self.send_response(200)
+        self.send_header("Content-Type","application/json")
+        self.send_header("Transfer-Encoding","chunked")
         self.end_headers()
 
-        # yield each node result immediately
-        iterator = mod.run(
+        for update in mod.run(
             req["context"],
             req.get("query", {}),
             stream=True
-        )
-
-        for update in iterator:
+        ):
             chunk = (json.dumps(update) + "\n").encode("utf-8")
             self._send_chunk(chunk)
 
@@ -81,20 +141,18 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         self._send_chunk(b"", end=True)
 
     def _handle_non_stream(self, mod, req):
-        # only the *first* (and only) yield
         gen   = mod.run(req["context"], req.get("query", {}), stream=False)
         first = next(gen, {})
         body  = json.dumps(first).encode("utf-8")
 
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def _send_chunk(self, data: bytes, end: bool = False):
         if end:
-            # zero-length chunk terminator
             self.wfile.write(b"0\r\n\r\n")
         else:
             size = f"{len(data):X}\r\n".encode("utf-8")
@@ -104,10 +162,11 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
     def _error(self, code: int, payload: dict):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
 
 def run_server():
     server = ThreadingHTTPServer(("0.0.0.0", SSL_PORT), FlowManagerRequestHandler)
@@ -117,6 +176,7 @@ def run_server():
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
     print(f"Flow manager listening on port {SSL_PORT}")
     server.serve_forever()
+
 
 if __name__ == "__main__":
     run_server()
