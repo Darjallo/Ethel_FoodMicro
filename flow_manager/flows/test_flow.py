@@ -16,29 +16,25 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# flow_manager/flows/test_flow.py
-
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from .nodes import test_agent_node
 
 class TestFlowState(TypedDict, total=False):
     context: dict
-    session: str
     query: dict
     stream: bool
-    # the node’s final JSON result goes here
     test_agent_result: dict
 
-def run(context, session=None, query=None, stream=False):
+def run(context, query=None, stream=False):
     """
-    Entry point for the test_flow.
-    Always yields dicts, streaming if requested.
+    Entry point for test_flow.
+    Yields one dict per node when stream=True,
+    otherwise yields just the final dict.
     """
     state = {
         "context": context,
-        "session": session,
-        "query": query,
+        "query": query or {},
         "stream": stream
     }
 
@@ -49,11 +45,10 @@ def run(context, session=None, query=None, stream=False):
 
     app = builder.compile()
 
-    # choose streaming vs. non-streaming
     if stream:
         iterator = app.stream(state)
     else:
-        # wrap the single final result in a list so we can for-loop uniformly
+        # wrap the single result
         iterator = iter([app.invoke(state)])
 
     for update in iterator:

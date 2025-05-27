@@ -1,66 +1,51 @@
-# debug/send_test_flow.py
-import requests, urllib3, sys, json
+import requests
+import urllib3
+import json
+import time
 
-# Suppress warnings for self-signed HTTPS certs
+# disable warnings for self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 URL = "https://localhost:8000/"
 
-# 1) Non-streaming test (unchanged)
-print("Non-streaming test:\n-------------------")
-payload = {
-    "flow": "test_flow",
-    "context": {"message": "Hello World"}
-}
-resp = requests.post(URL, json=payload, timeout=5, verify=False)
-resp.raise_for_status()
-print("Non-stream response:")
-print(json.dumps(resp.json(), indent=2))
+def non_stream_test():
+    print("NON-STREAMING test:")
+    payload = {
+        "flow":   "test_flow",
+        "context": {"question": "What is the meaning of life?"},
+        "stream": False
+    }
+    resp = requests.post(URL, json=payload, verify=False, timeout=5)
+    resp.raise_for_status()
+    print(json.dumps(resp.json(), indent=2))
+    print()
 
+def stream_test():
+    print("STREAMING test:")
+    payload = {
+        "flow":   "test_flow",
+        "context": {"question": "What is the meaning of life?"},
+        "stream": True
+    }
+    # open a chunked GET
+    resp = requests.post(URL, json=payload, stream=True, verify=False, timeout=10)
+    resp.raise_for_status()
 
-# 2) Streaming test
-print("\n================\nStreaming test:\n-------------------")
-payload = {
-    "flow": "test_flow",
-    "context": {"message": "Hello World again"},
-    "stream": True
-}
-
-# Note: we pass `stream=True` and then read from resp.raw
-resp = requests.post(URL, json=payload, timeout=60, verify=False, stream=True)
-resp.raise_for_status()
-
-print("Streamed output:", end="", flush=True)
-
-buf = b""
-# read one byte at a time
-while True:
-    byte = resp.raw.read(1)
-    if not byte:
-        # EOF
-        break
-    buf += byte
-    if byte == b"\n":
-        # we've got a full JSON line
-        line = buf.decode("utf-8")
-        buf = b""
-        try:
-            packet = json.loads(line)
-        except json.JSONDecodeError:
-            # definitely not JSON? just print raw
-            sys.stdout.write(line)
-            sys.stdout.flush()
+    # iterate as soon as each line arrives
+    for line in resp.iter_lines(decode_unicode=True):
+        if not line:
             continue
+        # each line is one JSON update
+        try:
+            obj = json.loads(line)
+            print(f"> {json.dumps(obj)}")
+        except json.JSONDecodeError:
+            # fallback: raw
+            print(f"> [raw chunk] {line}")
+    print()
 
-        # This is the wrapper your flow_manager emits:
-        #   {"test_agent": {"test_agent_result": {"output": "X", ... }}}
-        # Or, if you rename the node, adjust accordingly.
-        node_key = next(iter(packet))              # e.g. "test_agent"
-        payload = packet[node_key]["test_agent_result"]
-        ch = payload.get("output", "")
-        # print that single character:
-        sys.stdout.write(ch)
-        sys.stdout.flush()
-
-print()  # final newline
+if __name__ == "__main__":
+    non_stream_test()
+    time.sleep(0.5)
+    stream_test()
 

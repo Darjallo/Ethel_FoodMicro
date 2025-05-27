@@ -17,9 +17,6 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-#
-# flow_manager/flows/nodes.py
-
 from agent_pool.agents.test_agent.node_adapter import test_agent_node
 
 NODES = {

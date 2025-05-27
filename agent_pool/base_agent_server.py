@@ -20,47 +20,42 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class AgentRequestHandler(BaseHTTPRequestHandler):
-    # Set at runtime: AgentRequestHandler.business_logic = handler instance
+    # injected at runtime
     business_logic = None
 
     def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        raw_data = self.rfile.read(content_length)
+        length = int(self.headers.get("Content-Length", 0))
+        body   = self.rfile.read(length)
         try:
-            req_json = json.loads(raw_data.decode())
-        except Exception:
+            req = json.loads(body)
+        except json.JSONDecodeError:
             self.send_response(400)
-            self.send_header('Content-Type', 'application/json')
+            self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"error": "Invalid JSON"}')
+            self.wfile.write(b'{"error":"Invalid JSON"}')
             return
 
-        # Always chunked-transfer, delegate stream logic to agent itself
+        # always chunked, agent itself handles streaming vs non
         self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Transfer-Encoding', 'chunked')
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
 
-        # Get agent output (always yields chunks, streaming or not)
-        output_gen = None
-        if req_json.get("stream", False) and hasattr(self.business_logic, "stream"):
-            output_gen = self.business_logic.stream(req_json)
+        # choose agent.stream or agent.handle
+        if req.get("stream") and hasattr(self.business_logic, "stream"):
+            gen = self.business_logic.stream(req)
         else:
-            # Non-streaming: wrap result in a single-item generator
-            single_result = self.business_logic.handle(req_json)
-            output_gen = (json.dumps(single_result),)
+            single = self.business_logic.handle(req)
+            gen = (json.dumps(single),)
 
-        # Stream the agent-generated output chunk by chunk
-        for chunk in output_gen:
-            if not isinstance(chunk, bytes):
+        for chunk in gen:
+            if isinstance(chunk, str):
                 chunk = chunk.encode("utf-8")
-            # Write chunk size in hex, then chunk, then flush
-            self.wfile.write(b"%X\r\n" % len(chunk))
-            self.wfile.write(chunk)
-            self.wfile.write(b"\r\n")
+            size = f"{len(chunk):X}\r\n".encode("utf-8")
+            self.wfile.write(size + chunk + b"\r\n")
             self.wfile.flush()
 
-        # Signal end-of-chunks
+        # end
         self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
 

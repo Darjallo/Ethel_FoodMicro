@@ -19,68 +19,32 @@
 #
 from datetime import datetime
 from agent_pool.base_agent_server import run_server
-import time
-import json
 
 class TestAgent:
     def handle(self, request_json):
-        # Non-streaming: Echo input, add "processed" timestamp
-        content = f"Processed with pride by your friendly neighborhood test agent at {datetime.now().isoformat()}"
-        response = {
-            "id": "test_agent_response",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": content
-                    },
-                    "finish_reason": "stop"
-                }
-            ]
+        """
+        Always returns a single JSON completion echoing back the user's question.
+        """
+        # assume the user’s question is passed in request_json["context"]["question"]
+        question = request_json.get("context", {}).get("question", "<no question>")
+        content = (
+            f"Pondered the question “{question}” at {datetime.now().isoformat()}"
+        )
+        # build an OpenAI‐style completion payload
+        return {
+            "id":      "test_agent_response",
+            "object":  "chat.completion",
+            "created": int(datetime.now().timestamp()),
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop"
+            }]
         }
-        return response
 
-    def stream(self, request_json):
-        # Streaming: yield partial OpenAI-style responses character by character
-        content = f"Processed with pride by your friendly neighborhood test agent at {datetime.now().isoformat()}"
-        for char in content:
-            chunk = {
-                "id": "test_agent_stream",
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {
-                            "content": char
-                        },
-                        "finish_reason": None
-                    }
-                ]
-            }
-            print(f"Yielding: [{char}]")
-            yield json.dumps(chunk)
-            time.sleep(0.05)  # Adjust speed as needed
-        
-        # Send the final DONE message, exactly like OpenAI does
-        done_chunk = {
-            "id": "test_agent_stream",
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop"
-                }
-            ]
-        }
-        yield json.dumps(done_chunk)
+    # no .stream() at all — any "stream" requests are just handled eagerly
 
 if __name__ == "__main__":
+    # run on port 8000 by default
     run_server(port=8000, handler_instance=TestAgent())
-
 
