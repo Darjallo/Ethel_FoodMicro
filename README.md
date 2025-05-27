@@ -1,93 +1,158 @@
-# EthelFlow
+# Project Ethel  
+## Flow Manager
 
+> **Flow Manager** is a lightweight orchestration layer for executing multi-step “flows” of micro-services (agents). It offers both streaming and non-streaming modes, mimicking the OpenAI Chat Completion API pattern, and is fully extensible via custom flows and agents.
 
-
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.ethz.ch/ethel/ethelflow.git
-git branch -M main
-git push -uf origin main
-```
-
-## Integrate with your tools
-
-- [ ] [Set up project integrations](https://gitlab.ethz.ch/ethel/ethelflow/-/settings/integrations)
-
-## Collaborate with your team
-
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+---
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+\`\`\`text
+# Project Ethel
+# Flow Manager
+#
+# Copyright (C) 2025  Gerd Kortemeyer, ETH Zurich
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+\`\`\`
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)  
+2. [Getting Started](#getting-started)  
+3. [Flow Manager API](#flow-manager-api)  
+4. [Flows](#flows)  
+5. [Agents](#agents)  
+6. [Extending with New Flows & Agents](#extending-with-new-flows--agents)  
+7. [Example: \`test_flow\` & \`test_agent\`](#example-test_flow--test_agent)  
+8. [License](#license)  
+
+---
+
+## Overview
+
+The Flow Manager exposes a single HTTP endpoint (\`POST /\`) that accepts:
+
+- **flow**: string name of the flow module under \`flows/\`  
+- **context**: arbitrary JSON object (e.g., containing courseID, userID, sessionID, etc.)  
+- **query**: flow-specific parameters  
+- **stream**: boolean; when \`true\`, returns a chunked response with each node’s update as it completes, otherwise returns only the final result  
+
+Under the hood, each flow is defined via a directed acyclic graph of “nodes,” where each node invokes an external micro-service (an “agent”).  
+
+---
+
+## Getting Started
+
+1. **Clone** the repo.  
+2. **Install** Python dependencies for the Flow Manager:
+   \`\`\`bash
+   pip install -r flow_manager/requirements.txt
+   \`\`\`
+3. **Build & run** your agents (each in its own container or process).  
+4. **Launch** the Flow Manager:
+   \`\`\`bash
+   python flow_manager/flow_manager.py
+   \`\`\`
+5. **Test** with the example test script:
+   \`\`\`bash
+   python debug/send_test_flow.py
+   \`\`\`
+
+---
+
+## Flow Manager API
+
+### Request
+
+\`\`\`http
+POST / HTTP/1.1
+Content-Type: application/json
+
+{
+  "flow": "test_flow",
+  "context": { … },
+  "query": { … },      # optional
+  "stream": true|false  # optional, defaults to false
+}
+\`\`\`
+
+### Response
+
+- **Non-streaming** (\`stream=false\`):  
+  A single JSON object with the final state.
+
+- **Streaming** (\`stream=true\`):  
+  An HTTP/1.1 chunked response. Each chunk is a line-delimited JSON object representing the output of each node, in order.  
+
+---
+
+## Flows
+
+Flows live under \`flow_manager/flows/\`:
+
+- Each flow module exports a \`run(context, session=None, query=None, stream=False)\` generator.
+- Flows define a **state schema** (via \`TypedDict\`) and use \`langgraph\` to build a small DAG.
+- Nodes in the graph map to adapter functions that call external agents.
+
+---
+
+## Agents
+
+Agents live under \`agent_pool/agents/…\`:
+
+- Each agent directory contains:
+  - \`agent.py\`: a small HTTP server conforming to our “OpenAI-like” micro-service interface.
+  - \`node_adapter.py\`: a thin client adapter that the Flow Manager uses to invoke the agent.
+- Agents implement two methods:
+  - \`handle(request_json) → dict\`: for non-streamed calls.
+  - \`stream(request_json) → Iterable[str]\`: for streamed character-/token-by-character output.
+
+---
+
+## Extending with New Flows & Agents
+
+1. **Add an Agent**  
+   - Create \`agent_pool/agents/<your_agent>/agent.py\` and define \`handle\` and/or \`stream\`.  
+   - Wire up \`agent_pool/agents/<your_agent>/node_adapter.py\` to call your HTTP micro-service.  
+
+2. **Add a Flow**  
+   - In \`flow_manager/flows/\`, create \`<your_flow>.py\`, define a \`run(...)\` generator using \`langgraph\`.  
+   - In \`flow_manager/flows/nodes.py\`, register your new node adapters.  
+
+3. **Deploy**  
+   - Build & run each agent (e.g., as Docker containers exposing port 8000).  
+   - Rebuild & run the Flow Manager.  
+
+---
+
+## Example: \`test_flow\` & \`test_agent\`
+
+- **\`test_flow\`** in \`flow_manager/flows/test_flow.py\`:  
+  A trivial one-node flow that calls \`test_agent\`.
+
+- **\`test_agent\`** in \`agent_pool/agents/test_agent/agent.py\`:  
+  Simulates an OpenAI chat completion:
+  - **Non-stream**: returns a single JSON  
+  - **Stream**: yields one character at a time in OpenAI chunk format  
+
+Use these as templates when adding your own nodes and agents.
+
+---
+
+## License
+
+This project is licensed under the GNU GPLv3.  
