@@ -25,7 +25,7 @@ dockerfile_lines = [
     "RUN pip install --no-cache-dir -r requirements.txt",
     "",
     "COPY flow_manager/flow_manager.py flow_manager.py",
-    "COPY flow_manager/flows flows/",
+    "COPY flow_manager/asset_handler.py asset_handler.py",
     ""
 ]
 
