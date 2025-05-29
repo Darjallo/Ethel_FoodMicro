@@ -20,7 +20,7 @@ def main():
     )
     p.add_argument(
         "--path", "-p",
-        help="Remote file path (defaults to basename of the file)"
+        help="Remote file path (defaults to the exact relative path you passed)"
     )
     p.add_argument(
         "--url", "-u",
@@ -33,7 +33,13 @@ def main():
         print(f"Error: file '{args.file}' does not exist or is not a file.", file=sys.stderr)
         sys.exit(1)
 
-    remote_path = args.path or os.path.basename(args.file)
+    # by default preserve the local relative path (strip any leading "./")
+    if args.path:
+        remote_path = args.path
+    else:
+        remote_path = os.path.normpath(args.file)
+        if remote_path.startswith(f".{os.sep}"):
+            remote_path = remote_path[2:]
 
     with open(args.file, "rb") as f:
         files = {
@@ -61,6 +67,7 @@ def main():
         print("Response:", resp.json())
     except ValueError:
         print("Non-JSON response:", resp.text)
+
 
 if __name__ == "__main__":
     main()
