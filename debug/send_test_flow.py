@@ -12,6 +12,7 @@ def non_stream_test():
     print("NON-STREAMING test:")
     payload = {
         "flow":   "test_flow",
+        "flow_reload": True,
         "context": {"question": "What is the meaning of life?"},
         "stream": False
     }

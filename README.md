@@ -1,149 +1,185 @@
 # Project Ethel  
-## Flow Manager
+## Flow Manager  
 
 > **Flow Manager** is a lightweight orchestration layer for executing multi-step “flows” of micro-services (agents). It offers both streaming and non-streaming modes, mimicking the OpenAI Chat Completion API pattern, and is fully extensible via custom flows and agents.
-
 
 ## Table of Contents
 
 1. [Overview](#overview)  
 2. [Getting Started](#getting-started)  
 3. [Flow Manager API](#flow-manager-api)  
-4. [Flows](#flows)  
-5. [Agents](#agents)  
-6. [Extending with New Flows & Agents](#extending-with-new-flows--agents)  
-7. [Example: \`test_flow\` & \`test_agent\`](#example-test_flow--test_agent)  
-8. [License](#license)  
+4. [Asset Management](#asset-management)  
+5. [Flows](#flows)  
+6. [Agents](#agents)  
+7. [Hot-Reloading Flows](#hot-reloading-flows)  
+8. [Docker & Deployment](#docker--deployment)  
+9. [Extending with New Flows & Agents](#extending-with-new-flows--agents)  
+10. [Example: `test_flow` & `test_agent`](#example-test_flow--test_agent)  
+11. [License](#license)  
 
 ---
 
 ## Overview
 
-The Flow Manager exposes a single HTTP endpoint (\`POST /\`) that accepts:
+The Flow Manager exposes two endpoints:
 
-- **flow**: string name of the flow module under \`flows/\`  
-- **context**: arbitrary JSON object (e.g., containing courseID, userID, sessionID, etc.)  
-- **query**: flow-specific parameters  
-- **stream**: boolean; when \`true\`, returns a chunked response with each node’s update as it completes, otherwise returns only the final result  
+- **POST /**: invoke a flow  
+- **POST /upload**: upload a binary asset into MongoDB/GridFS  
+- **GET /files/**: list collections, directories, or fetch files
 
-Under the hood, each flow is defined via a directed acyclic graph of “nodes,” where each node invokes an external micro-service (an “agent”).  
-
----
+Each flow is defined as a small DAG of “nodes” via [langgraph], and each node invokes an external micro-service (“agent”).  
 
 ## Getting Started
 
-1. **Clone** the repo.  
-2. **Install** Python dependencies for the Flow Manager:
-   \`\`\`bash
-   pip install -r flow_manager/requirements.txt
-   \`\`\`
-3. **Build & run** your agents (each in its own container or process).  
-4. **Launch** the Flow Manager:
-   \`\`\`bash
-   python flow_manager/flow_manager.py
-   \`\`\`
-5. **Test** with the example test script:
-   \`\`\`bash
-   python debug/send_test_flow.py
-   \`\`\`
-
----
+```bash
+git clone <repo>
+cd ethelflow
+pip install -r flow_manager/requirements.txt
+# build & tag your Docker images
+docker-compose up --build
+```
 
 ## Flow Manager API
 
-### Request
+### Invoke a Flow
 
-\`\`\`http
+```http
 POST / HTTP/1.1
 Content-Type: application/json
 
 {
   "flow": "test_flow",
-  "context": { … },
-  "query": { … },      # optional
-  "stream": true|false  # optional, defaults to false
+  "context": { "courseID":"CS101", "userID":"alice" },
+  "query": { /* flow-specific params */ },
+  "stream": true|false,        # defaults to false
+  "flow_reload": true|false    # hot-reload your flow module
 }
-\`\`\`
+```
 
-### Response
+- **Non-streaming** (`stream=false`): returns a single JSON object (final state).  
+- **Streaming** (`stream=true`): returns a chunked response; each chunk is a JSON update for a node.  
 
-- **Non-streaming** (\`stream=false\`):  
-  A single JSON object with the final state.
+### Upload Assets
 
-- **Streaming** (\`stream=true\`):  
-  An HTTP/1.1 chunked response. Each chunk is a line-delimited JSON object representing the output of each node, in order.  
+```http
+POST /upload
+Content-Type: multipart/form-data
 
----
+Fields:
+  - file: binary file  
+  - collection: e.g. courseID or document set  
+  - path: full relative path, e.g. "lectures/week1/slides.pdf"
+```
+
+Stores in MongoDB/GridFS under the given metadata. Re-uploading the same collection+path replaces the old file.
+
+### List & Fetch Assets
+
+- **List collections**: `GET /files`  
+- **List directory**: `GET /files/{collection}/{optional_path}`  
+- **Fetch file**: `GET /files/{collection}/{path_to_file}`  
+
+Directory listing returns JSON:
+```json
+[
+  { "type":"collection","name":"CS101" },
+  …
+]
+```
+or
+```json
+[
+  { "type":"directory","name":"week1" },
+  { "type":"file","name":"slides.pdf" }
+]
+```
+Fetching a file returns the raw bytes with correct `Content-Type`.
+
+## Asset Management
+
+Assets live in MongoDB/GridFS, keyed by `metadata.collection` and `metadata.path`. The Flow Manager’s `asset_handler.py` encapsulates:
+
+- upload: replace-old + store  
+- listing: collection & directory traversal  
+- file serving with MIME detection  
 
 ## Flows
 
-Flows live under \`flow_manager/flows/\`:
+Flows reside in `flow_manager/flows/`. Each flow module:
 
-- Each flow module exports a \`run(context, session=None, query=None, stream=False)\` generator.
-- Flows define a **state schema** (via \`TypedDict\`) and use \`langgraph\` to build a small DAG.
-- Nodes in the graph map to adapter functions that call external agents.
-
----
+- Defines a TypedDict schema for its state  
+- Builds a DAG via `StateGraph` (add_node/add_edge)  
+- Exposes `run(context, query={}, stream=False)` as a generator
 
 ## Agents
 
-Agents live under \`agent_pool/agents/…\`:
+Agents live in `agent_pool/agents/<agent_name>/`. Each directory contains:
 
-- Each agent directory contains:
-  - \`agent.py\`: a small HTTP server conforming to our “OpenAI-like” micro-service interface.
-  - \`node_adapter.py\`: a thin client adapter that the Flow Manager uses to invoke the agent.
-- Agents implement two methods:
-  - \`handle(request_json) → dict\`: for non-streamed calls.
-  - \`stream(request_json) → Iterable[str]\`: for streamed character-/token-by-character output.
+- `agent.py`: HTTP server implementing `handle(request)` and optional `stream(request)`  
+- `node_adapter.py`: client adapter invoked by Flow Manager  
 
----
+Agents follow an OpenAI-like pattern:
+- non-stream: return one JSON  
+- stream: yield newline-joined JSON chunks
+
+## Hot-Reloading Flows
+
+Send `"flow_reload": true` in your POST body to force the Flow Manager to `importlib.reload(...)` your flow module before invocation. Great for rapid development without restarting the server.
+
+## Docker & Deployment
+
+A sample `docker-compose.yml` sets up:
+- `flow_manager` service  
+- your agents (e.g. `test_agent`)  
+- MongoDB (with GridFS)  
+- Milvus for embeddings  
+
+Mount your local `flow_manager/flows` directory into the container for hot-updates:
+
+```yaml
+volumes:
+  - ./flow_manager/flows:/app/flows:ro
+```
 
 ## Extending with New Flows & Agents
 
-1. **Add an Agent**  
-   - Create \`agent_pool/agents/<your_agent>/agent.py\` and define \`handle\` and/or \`stream\`.  
-   - Wire up \`agent_pool/agents/<your_agent>/node_adapter.py\` to call your HTTP micro-service.  
+### Add an Agent
 
-2. **Add a Flow**  
-   - In \`flow_manager/flows/\`, create \`<your_flow>.py\`, define a \`run(...)\` generator using \`langgraph\`.  
-   - In \`flow_manager/flows/nodes.py\`, register your new node adapters.  
+1. Create `agent_pool/agents/<your_agent>/agent.py` with `handle` and/or `stream`.  
+2. Create `agent_pool/agents/<your_agent>/node_adapter.py` to call your HTTP endpoint.  
 
-3. **Deploy**  
-   - Build & run each agent (e.g., as Docker containers exposing port 8000).  
-   - Rebuild & run the Flow Manager.  
+### Add a Flow
 
----
+1. In `flow_manager/flows/`, create `<your_flow>.py` and implement `run(...)`.  
+2. Register your node-adapters in `flow_manager/flows/nodes.py`.  
 
-## Example: \`test_flow\` & \`test_agent\`
+Reinvoke flows with `"flow_reload": true` to pick up changes without restarting.
 
-- **\`test_flow\`** in \`flow_manager/flows/test_flow.py\`:  
-  A trivial one-node flow that calls \`test_agent\`.
+## Example: `test_flow` & `test_agent`
 
-- **\`test_agent\`** in \`agent_pool/agents/test_agent/agent.py\`:  
-  Simulates an OpenAI chat completion:
-  - **Non-stream**: returns a single JSON  
-  - **Stream**: yields one character at a time in OpenAI chunk format  
+- **test_flow**: a one-node flow calling `test_agent`.  
+- **test_agent**: echoes back with a timestamp; supports both streaming (char-by-char) and non-streaming.  
 
-Use these as templates when adding your own nodes and agents.
-
----
+Use these as templates.
 
 ## License
 
-This project is licensed under the GNU GPLv3.  
-
- Copyright (C) 2025  Gerd Kortemeyer, ETH Zurich
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+```
+# Project Ethel
+# Flow Manager
+#
+# Copyright (C) 2025  Gerd Kortemeyer, ETH Zurich
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```  

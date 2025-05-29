@@ -14,6 +14,7 @@ services:
     volumes:
       - /etc/letsencrypt/fullchain.pem:/run/certs/fullchain.pem:ro
       - /etc/letsencrypt/privkey.pem:/run/certs/privkey.pem:ro
+      - ./flow_manager/flows:/app/flows:ro
     environment:
       - SSL_CERT_PATH=/run/certs/fullchain.pem
       - SSL_KEY_PATH=/run/certs/privkey.pem

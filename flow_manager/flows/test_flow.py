@@ -40,8 +40,13 @@ def run(context, query=None, stream=False):
 
     builder = StateGraph(TestFlowState)
     builder.add_node("test_agent", test_agent_node)
+    builder.add_node("test_agent_again", test_agent_node)
+    builder.add_node("test_agent_yet_again", test_agent_node)
+
     builder.add_edge(START, "test_agent")
-    builder.add_edge("test_agent", END)
+    builder.add_edge("test_agent","test_agent_again")
+    builder.add_edge("test_agent_again","test_agent_yet_again")
+    builder.add_edge("test_agent_yet_again", END)
 
     app = builder.compile()
 

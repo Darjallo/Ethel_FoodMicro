@@ -22,6 +22,7 @@ import os
 import re
 import ssl
 import json
+import sys
 import traceback
 import importlib
 
@@ -58,6 +59,13 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         flow = req.get("flow")
         if not flow or not re.fullmatch(r"[A-Za-z0-9_]+", flow):
             return self._error(400, {"error": "Missing or invalid flow name"})
+        
+        # Do we hot-reload?
+        if req.get("flow_reload"):
+            # Remove the cached copy
+            mod_name = f"flows.{flow}"
+            if mod_name in sys.modules:
+                del sys.modules[mod_name]
 
         try:
             mod = importlib.import_module(f"flows.{flow}")
