@@ -18,8 +18,10 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 from agent_pool.agents.test_agent.node_adapter import test_agent_node
+from agent_pool.agents.emb_ada3large.node_adapter import emb_ada3large_node
 
 NODES = {
     "test_agent": test_agent_node,
+    "emb_ada3large": emb_ada3large_node
 }
 

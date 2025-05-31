@@ -16,21 +16,37 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-import requests
+# node_adapter.py
 
-def test_agent_node(state):
+import os
+import requests
+from typing import Callable, Iterator
+
+def test_agent_node(
+    *,
+    input_key_map: dict[str, str] = {"context": "context", "query": "query",},
+    output_key: str = "test_agent_result",
+    url: str = "http://test_agent:8000/",
+) -> Callable[[dict], Iterator[dict]]:
     """
-    Calls the test_agent microservice in ONE shot,
-    returns its JSON under "test_agent_result".
+    Builds a node which takes `state["context"]` and `state["query"]`, 
+    sends them to http://test_agent:8000/, and yields { output_key: <resp.json()> }.
     """
-    url = "http://test_agent:8000/"
-    payload = {
-        "context": state["context"],
-        "query":   state.get("query", {}),
-        "stream":  False
-    }
-    resp = requests.post(url, json=payload, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    yield {"test_agent_result": data}
+    def node(state: dict) -> Iterator[dict]:
+        payload = {}
+        print("In test agent",flush=True)
+        # copy `context` and `query` into payload
+        for state_key, payload_field in input_key_map.items():
+            # if missing, get default {} (or you could raise)
+            payload[payload_field] = state.get(state_key, {})
+
+        # force stream=False always
+        payload["stream"] = False
+
+        resp = requests.post(url, json=payload, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        yield {output_key: data}
+
+    return node
 

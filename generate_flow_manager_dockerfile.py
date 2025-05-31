@@ -26,7 +26,10 @@ dockerfile_lines = [
     "",
     "COPY flow_manager/flow_manager.py flow_manager.py",
     "COPY flow_manager/asset_handler.py asset_handler.py",
-    ""
+    "COPY flow_manager/flows flows",
+    "",
+    "COPY ../agent_pool/agents/__init__.py agent_pool/agents/__init__.py",
+    "",
 ]
 
 for src, dest in adapter_files:

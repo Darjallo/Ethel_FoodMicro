@@ -1,6 +1,7 @@
 version: "3.9"
 
 services:
+
   flow_manager:
     image: flow_manager:latest
     deploy:
@@ -11,6 +12,9 @@ services:
       - ethel_net
     ports:
       - "8000:8000" 
+    env_file:
+      - ./secret/.env
+      - ./secret/emb_ada3large/.env
     volumes:
       - /etc/letsencrypt/fullchain.pem:/run/certs/fullchain.pem:ro
       - /etc/letsencrypt/privkey.pem:/run/certs/privkey.pem:ro
@@ -31,7 +35,6 @@ services:
 
   milvus:
     image: milvusdb/milvus:v2.2.14
-    container_name: milvus
     command: ["milvus","run","standalone"]
     ports:
       - "19530:19530"   # gRPC
@@ -47,7 +50,6 @@ services:
 
   mongodb:
     image: mongo:6.0
-    container_name: mongodb
     ports:
       - "27017:27017"
     volumes:

@@ -69,8 +69,9 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
 
         try:
             mod = importlib.import_module(f"flows.{flow}")
-        except ImportError:
-            return self._error(404, {"error": f"No such flow '{flow}'"})
+        except ImportError as e:
+            print(f"Could not import {flow}: {e}",flush=True)
+            return self._error(404, {"error": f"No such flow '{flow}': {e}"})
 
         try:
             if req.get("stream"):
