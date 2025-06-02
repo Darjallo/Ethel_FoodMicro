@@ -22,6 +22,7 @@ import os
 import time
 import tempfile
 import traceback
+import json
 from datetime import datetime
 
 import requests
@@ -30,19 +31,18 @@ from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
 from langchain_community.document_loaders import UnstructuredPDFLoader
-from langchain.document_loaders import TextLoader, UnstructuredWordDocumentLoader, UnstructuredPowerPointLoader
+from langchain.document_loaders import (
+    TextLoader,
+    UnstructuredWordDocumentLoader,
+    UnstructuredPowerPointLoader,
+)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from pymilvus import (
-    connections,
-    FieldSchema,
-    CollectionSchema,
-    DataType,
-    Collection,
-    utility,
-)
+from chromadb import Client
+from chromadb.config import Settings
 
 from agent_pool.base_agent_server import run_server
+from agent_pool.base_vector_db import open_chroma_for
 
 
 class EmbFileAda3LargeAgent:
@@ -52,13 +52,15 @@ class EmbFileAda3LargeAgent:
       2. Fetches the file from MongoDB/GridFS
       3. Chooses the correct LangChain loader & splits it into chunks
       4. Calls Azure OpenAI's Ada-3-large embeddings endpoint (with retries) for each chunk
-      5. Connects to Milvus (using pymilvus), with a retry loop:
-           • If Milvus isn’t reachable yet, waits and retries
-           • Once connected, checks if a collection named `collection` exists
-             – If it exists, deletes any old chunks for the same file path
-             – If it doesn’t exist, will create it on the first embedding
-      6. Stores each chunk’s embedding **and** its raw text (for RAG later)
-      7. Returns a JSON‐compatible dict with "status" (HTTP‐style code) and either "message" or "error".
+      5. Connects to Chroma (one folder per collection, sharded). If the Chroma collection
+         already exists with a matching emb_method, open it; if it exists but emb_method
+         mismatches, return an error; if it doesn’t exist, create it.
+      6. Deletes any existing vectors in that Chroma collection for the same file path
+         (so new versions overwrite old embeddings).
+      7. Inserts each chunk’s embedding vector, raw text, and metadata (path, filename,
+         chunk_number, emb_method) into Chroma.
+      8. Returns a JSON-compatible dict with "status" (HTTP-style code) and either
+         "message" or "error".
     """
 
     def __init__(self):
@@ -72,41 +74,7 @@ class EmbFileAda3LargeAgent:
         except PyMongoError as e:
             raise RuntimeError(f"Could not connect to MongoDB: {e}")
 
-        # === 2) Milvus setup with retry logic ===
-        MILVUS_HOST = os.getenv("MILVUS_HOST", "milvus")
-        MILVUS_PORT = os.getenv("MILVUS_PORT", "19530")
-
-        # How many times to retry (default: 10 attempts, i.e. ~50 seconds total if using 5s backoff)
-        max_retries = int(os.getenv("MILVUS_CONNECT_RETRIES", "10"))
-        backoff_seconds = int(os.getenv("MILVUS_CONNECT_BACKOFF", "5"))
-
-        connected = False
-        last_err = None
-        for attempt in range(1, max_retries + 1):
-            try:
-                print(f"[EmbFileAda3LargeAgent] Attempting to connect to Milvus at {MILVUS_HOST}:{MILVUS_PORT} "
-                      f"(attempt {attempt}/{max_retries})...", flush=True)
-                connections.connect("default", host=MILVUS_HOST, port=MILVUS_PORT)
-                print("[EmbFileAda3LargeAgent] Successfully connected to Milvus.", flush=True)
-                connected = True
-                break
-            except Exception as e:
-                last_err = e
-                print(f"[EmbFileAda3LargeAgent] Milvus connection failed: {e}", flush=True)
-                if attempt < max_retries:
-                    print(f"[EmbFileAda3LargeAgent] Retrying in {backoff_seconds} seconds...", flush=True)
-                    time.sleep(backoff_seconds)
-                else:
-                    # Final attempt also failed
-                    break
-
-        if not connected:
-            raise RuntimeError(
-                f"Could not connect to Milvus at {MILVUS_HOST}:{MILVUS_PORT} "
-                f"after {max_retries} attempts. Last error: {last_err}"
-            )
-
-        # === 3) Azure OpenAI Ada-3-large config ===
+        # === 2) Azure OpenAI Ada-3-large config ===
         self.azure_endpoint = os.environ["AZURE_ENDPOINT"]
         self.azure_key = os.environ["AZURE_KEY"]
         self.azure_deployment = os.environ["AZURE_ADA3LARGE_DEPLOYMENT"]
@@ -121,7 +89,7 @@ class EmbFileAda3LargeAgent:
             "api-key": self.azure_key,
         }
 
-        # === 4) Chunker parameters (can be overridden via env) ===
+        # === 3) Chunker parameters (can be overridden via env) ===
         self.chunk_size = int(os.getenv("CHUNK_SIZE", "2000"))
         self.chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "400"))
 
@@ -151,15 +119,12 @@ class EmbFileAda3LargeAgent:
 
             except requests.exceptions.HTTPError as http_err:
                 if resp.status_code == 429:
-                    # Another 429 caught by raise_for_status
                     time.sleep(backoff)
                     backoff *= 2
                     continue
                 else:
-                    # Non-429 HTTP error
                     raise RuntimeError(f"HTTP error during embedding: {http_err} (status {resp.status_code})")
             except Exception as exc:
-                # Some other network/error—bubble up
                 raise RuntimeError(f"Error calling embedding endpoint: {exc}")
 
         raise RuntimeError("Exceeded max retries for embedding call (rate-limited)")
@@ -218,7 +183,6 @@ class EmbFileAda3LargeAgent:
             })
             return result
 
-        # Split into collection and path
         if "/" not in file_identifier:
             result.update({
                 "status": 400,
@@ -249,7 +213,7 @@ class EmbFileAda3LargeAgent:
             })
             return result
 
-        # 3) Write bytes to a temporary local file so LangChain loaders can read it
+        # 3) Write bytes to a temporary local file for LangChain loaders
         _, extension = os.path.splitext(file_path)
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as tmp:
@@ -278,121 +242,77 @@ class EmbFileAda3LargeAgent:
             })
             return result
 
-        # 5) Begin Milvus operations (delete old, maybe create schema, then insert)
+        # 5) Open (or create) Chroma collection for this `collection_name`
+        #    If it exists but with a different embedder, return an error.
+        chroma_result = open_chroma_for(collection_name, emb_method="ada3large")
+        if chroma_result is None:
+            try:
+                os.remove(local_path)
+            except OSError:
+                pass
+            result.update({
+                "status": 400,
+                "error": (
+                    f"Chroma folder exists for collection '{collection_name}' "
+                    f"with a different embedding method."
+                )
+            })
+            return result
+
+        client, chr_collection = chroma_result
+
+        # 6) Delete any existing embeddings for this same file_path
         try:
-            if utility.has_collection(collection_name):
-                milvus_collection = Collection(collection_name)
-                # Delete any existing embeddings for this same file_path
-                delete_expr = f'path == "{file_path}"'
-                milvus_collection.delete(delete_expr)
-                milvus_collection.flush()
-                collection_preexisted = True
-            else:
-                collection_preexisted = False
+            chr_collection.delete(where={"path": file_path})
+        except Exception:
+            # If the collection was just created and is empty, delete() might raise
+            # or simply do nothing. Ignore any errors here.
+            pass
 
-            # === 5a) Embed all chunks (retry on 429) ===
-            embeddings: list[list[float]] = []
-            for idx, doc in enumerate(splits):
-                text = doc.page_content or ""
+        # 7) Embed each chunk and collect data for insertion
+        embeddings = []
+        metadatas = []
+        documents = []
+        ids = []
+
+        for idx, doc in enumerate(splits):
+            text = doc.page_content or ""
+            try:
+                emb_vec = self.embed_text(text)
+            except Exception as exc:
+                traceback.print_exc()
                 try:
-                    emb_vec = self.embed_text(text)
-                except Exception as exc:
-                    raise RuntimeError(f"Failed to embed chunk {idx}: {exc}")
-                embeddings.append(emb_vec)
+                    os.remove(local_path)
+                except OSError:
+                    pass
+                result.update({
+                    "status": 500,
+                    "error": f"Failed to embed chunk {idx}: {exc}"
+                })
+                return result
 
-                # On first chunk for a brand-new collection, create schema + index
-                if idx == 0 and not collection_preexisted:
-                    dim = len(emb_vec)
-                    fields = [
-                        FieldSchema(
-                            name="id",
-                            dtype=DataType.VARCHAR,
-                            max_length=1024,
-                            is_primary=True,
-                            description="unique chunk ID (collection/file_path-chunk_number)"
-                        ),
-                        FieldSchema(
-                            name="path",
-                            dtype=DataType.VARCHAR,
-                            max_length=2048,
-                            description="the file path (collection-relative)"
-                        ),
-                        FieldSchema(
-                            name="filename",
-                            dtype=DataType.VARCHAR,
-                            max_length=512,
-                            description="filename (last segment of path)"
-                        ),
-                        FieldSchema(
-                            name="chunk_number",
-                            dtype=DataType.INT64,
-                            description="chunk index within the file"
-                        ),
-                        FieldSchema(
-                            name="emb_method",
-                            dtype=DataType.VARCHAR,
-                            max_length=64,
-                            description="embedding method identifier, e.g. 'ada3large'"
-                        ),
-                        FieldSchema(
-                            name="content",
-                            dtype=DataType.VARCHAR,
-                            max_length=65535,
-                            description="the raw text of this chunk"
-                        ),
-                        FieldSchema(
-                            name="vector",
-                            dtype=DataType.FLOAT_VECTOR,
-                            dim=dim,
-                            description="the embedding vector"
-                        ),
-                    ]
-                    schema = CollectionSchema(
-                        fields,
-                        description=f"Embeddings + text-chunks for collection '{collection_name}'"
-                    )
-                    milvus_collection = Collection(name=collection_name, schema=schema)
-                    milvus_collection.create_index(
-                        field_name="vector",
-                        params={
-                            "index_type": "IVF_FLAT",
-                            "params": {"nlist": 128},
-                            "metric_type": "L2"
-                        }
-                    )
-                    milvus_collection.load()
+            chunk_id = f"{collection_name}/{file_path}-{idx}"
+            embeddings.append(emb_vec)
+            documents.append(text)
 
-            # === 5b) Prepare and insert all chunks ===
-            num_chunks = len(splits)
-            ids = []
-            paths = []
-            filenames = []
-            chunk_numbers = []
-            emb_methods = []
-            contents = []
-            vectors = []
+            # Metadata for this chunk
+            metadatas.append({
+                "path": file_path,
+                "filename": os.path.basename(file_path),
+                "chunk_number": idx,
+                "emb_method": "ada3large"
+            })
 
-            for idx, (doc, vec) in enumerate(zip(splits, embeddings)):
-                chunk_id = f"{collection_name}/{file_path}-{idx}"
-                ids.append(chunk_id)
-                paths.append(file_path)
-                filenames.append(os.path.basename(file_path))
-                chunk_numbers.append(idx)
-                emb_methods.append("ada3large")
-                contents.append(doc.page_content or "")
-                vectors.append(vec)
+            ids.append(chunk_id)
 
-            milvus_collection.insert([
-                ids,
-                paths,
-                filenames,
-                chunk_numbers,
-                emb_methods,
-                contents,
-                vectors
-            ])
-            milvus_collection.flush()
-
+        # 8) Insert into Chroma
+        try:
+            chr_collection.add(
+                ids=ids,
+                embeddings=embeddings,
+                metadatas=metadatas,
+                documents=documents
+            )
         except Exception as exc:
             traceback.print_exc()
             try:
@@ -401,22 +321,23 @@ class EmbFileAda3LargeAgent:
                 pass
             result.update({
                 "status": 500,
-                "error": f"Error during Milvus operations: {exc}"
+                "error": f"Error inserting into Chroma: {exc}"
             })
             return result
 
-        # 6) Cleanup temp file
+        # 9) Cleanup temp file
         try:
             os.remove(local_path)
         except OSError:
             pass
 
-        # 7) Success
+        # 10) Success
+        num_chunks = len(splits)
         result.update({
             "status": 200,
             "message": (
                 f"Successfully embedded and inserted {num_chunks} chunk(s) "
-                f"into Milvus collection '{collection_name}'."
+                f"into Chroma collection '{collection_name}'."
             )
         })
         return result

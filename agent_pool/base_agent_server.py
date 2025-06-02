@@ -1,5 +1,5 @@
 # Project Ethel
-# Base for all agents
+# Base server functions
 #
 # Copyright (C) 2025  Gerd Kortemeyer, ETH Zurich
 #

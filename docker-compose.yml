@@ -40,8 +40,9 @@ services:
     environment:
       - MONGO_URI=mongodb://mongodb:27017
       - MONGO_DB=ethel_files
-      - MILVUS_HOST=milvus
-      - MILVUS_PORT=19530
+      - CHROMA_BASE_DIR=/chroma_db
+    volumes:
+      - /var/lib/ethel/chroma_db:/chroma_db
         
   test_agent:
     image: test_agent:latest
@@ -51,21 +52,6 @@ services:
         condition: on-failure
     networks:
       - ethel_net
-
-  milvus:
-    image: milvusdb/milvus:v2.2.14
-    command: ["milvus","run","standalone"]
-    ports:
-      - "19530:19530"   # gRPC
-      - "19121:19121"   # HTTP/REST
-    volumes:
-      - milvus_data:/var/lib/milvus
-    environment:
-      TZ: "UTC"
-      MILVUS_LOG_LEVEL: "warning"
-    networks:
-      - ethel_net
-
 
   mongodb:
     image: mongo:6.0
@@ -84,5 +70,4 @@ networks:
     driver: overlay
 
 volumes:
-  milvus_data:
   mongo_data:

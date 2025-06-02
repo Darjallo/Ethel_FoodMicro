@@ -88,10 +88,10 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Transfer-Encoding","chunked")
         self.end_headers()
 
-        # now flows.run(context, query, stream=True)
+        # now flows.run with stream=True
         for update in mod.run(
-            req.get("context", {}),
-            req.get("query", {}),
+            context=req.get("context", {}),
+            query=req.get("query", {}),
             stream=True
         ):
             chunk = (json.dumps(update) + "\n").encode("utf-8")
@@ -101,10 +101,10 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         self._send_chunk(b"", end=True)
 
     def _handle_non_stream(self, mod, req):
-        # run(context, query, stream=False) returns a generator
+        # run(...stream=False) returns a generator
         gen   = mod.run(
-            req.get("context", {}),
-            req.get("query", {}),
+            context=req.get("context", {}),
+            query=req.get("query", {}),
             stream=False
         )
         first = next(gen, {})

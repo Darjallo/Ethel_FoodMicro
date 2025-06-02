@@ -17,9 +17,12 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+# Make sure to import all new agents:
 from agent_pool.agents.test_agent.node_adapter import test_agent_node
 from agent_pool.agents.emb_ada3large.node_adapter import emb_ada3large_node
+from agent_pool.agents.emb_file_ada3large.node_adapter import emb_file_ada3large_node
 
+# ... and register them
 NODES = {
     "test_agent": test_agent_node,
     "emb_ada3large": emb_ada3large_node,
