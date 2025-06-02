@@ -2,3 +2,8 @@ Build agent images from this directory:
 
 sudo docker build -f agent_pool/agents/test_agent/Dockerfile -t test_agent:latest .
 
+or
+
+sudo docker build -f agent_pool/agents/emb_file_ada3large/Dockerfile -t emb_file_ada3large:latest .
+
+respectively.

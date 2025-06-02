@@ -22,6 +22,7 @@ from agent_pool.agents.emb_ada3large.node_adapter import emb_ada3large_node
 
 NODES = {
     "test_agent": test_agent_node,
-    "emb_ada3large": emb_ada3large_node
+    "emb_ada3large": emb_ada3large_node,
+    "emb_file_ada3large" : emb_file_ada3large_node
 }
 

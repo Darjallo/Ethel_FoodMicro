@@ -11,6 +11,7 @@ COPY flow_manager/flows flows
 
 COPY ../agent_pool/agents/__init__.py agent_pool/agents/__init__.py
 
+COPY ../agent_pool/agents/emb_file_ada3large/node_adapter.py agent_pool/agents/emb_file_ada3large/node_adapter.py
 COPY ../agent_pool/agents/test_agent/node_adapter.py agent_pool/agents/test_agent/node_adapter.py
 COPY ../agent_pool/agents/emb_ada3large/node_adapter.py agent_pool/agents/emb_ada3large/node_adapter.py
 

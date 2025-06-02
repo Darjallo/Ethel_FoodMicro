@@ -20,10 +20,29 @@ services:
       - /etc/letsencrypt/privkey.pem:/run/certs/privkey.pem:ro
       - ./flow_manager/flows:/app/flows:ro
     environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB=ethel_files
       - SSL_CERT_PATH=/run/certs/fullchain.pem
       - SSL_KEY_PATH=/run/certs/privkey.pem
       - SSL_PORT=8000
 
+  emb_file_ada3large:
+    image: emb_file_ada3large:latest
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+    env_file:
+      - ./secret/.env
+      - ./secret/emb_file_ada3large/.env
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB=ethel_files
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+        
   test_agent:
     image: test_agent:latest
     deploy:
