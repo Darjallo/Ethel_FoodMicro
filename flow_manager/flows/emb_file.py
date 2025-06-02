@@ -21,6 +21,7 @@
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from .nodes import emb_file_ada3large_node
+import os
 
 class EmbFileState(TypedDict, total=False):
     # Input from the caller
@@ -30,7 +31,7 @@ class EmbFileState(TypedDict, total=False):
     # Output of the emb_file_ada3large node (the JSON response from that agent)
     emb_file_ada3large_result: dict
 
-def run(file_id: str, stream: bool = False):
+def run(context=None, query=None, file_id=None, stream=False):
     """
     One-node flow that takes a single `file_id` (e.g. "collection/path/to/file.ext")
     and calls the emb_file_ada3large agent. Yields the final state with

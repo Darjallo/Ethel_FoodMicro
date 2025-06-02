@@ -35,7 +35,7 @@ class TestFlowState(TypedDict, total=False):
     emb_ada3large_result: list[float]
 
 
-def run(context, query=None, stream=False):
+def run(context=None, query=None, file_id=None, stream=False):
     """
     Entry point for test_flow.
     Yields one dict per node when stream=True,
