@@ -92,6 +92,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         for update in mod.run(
             context=req.get("context", {}),
             query=req.get("query", {}),
+            file_id=req.get("file_id", None),
             stream=True
         ):
             chunk = (json.dumps(update) + "\n").encode("utf-8")
@@ -105,6 +106,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         gen   = mod.run(
             context=req.get("context", {}),
             query=req.get("query", {}),
+            file_id=req.get("file_id", None),
             stream=False
         )
         first = next(gen, {})

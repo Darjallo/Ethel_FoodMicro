@@ -87,9 +87,7 @@ def main():
 
     flow_payload = {
         "flow": "emb_file",
-        "query": {
-            "file_id": f"{args.collection}/{remote_path}"
-        },
+        "file_id": f"{args.collection}/{remote_path}",
         "stream": False,
         "flow_reload": False
     }
