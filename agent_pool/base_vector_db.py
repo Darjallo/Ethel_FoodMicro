@@ -16,10 +16,12 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+# agent_pool/base_vector_db.py
+
 import os
 from chromadb import Client
 from chromadb.config import Settings
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union, Dict, List, Any
 
 def sharded_path(collection_name: str) -> str:
     """
@@ -59,26 +61,34 @@ def open_chroma_for(
     os.makedirs(folder, exist_ok=True)
 
     # 2) Instantiate a Chroma client pointing at that folder
+    #    Note: remove the deprecated `chroma_db_impl` argument and only pass valid fields.
     client = Client(
-        Settings(
-            chroma_db_impl="duckdb+parquet",
-            persist_directory=folder
+        settings=Settings(
+            persist_directory=folder,
+            anonymized_telemetry=False
         )
     )
 
-    # 3) Check if a collection named "chunks" already exists in this client/DB
-    existing = [c["name"] for c in client.list_collections().get("collections", [])]
-    if "chunks" in existing:
-        # a) Open it and compare metadata
+    # 3) List existing collections. Newer Chroma returns a list; older returned {"collections": [...]}
+    resp = client.list_collections()
+    if isinstance(resp, dict) and "collections" in resp:
+        # old style
+        existing_names = [c["name"] for c in resp["collections"]]
+    else:
+        # new style returns a List of metadata objects, each having a "name" key
+        existing_names = [c["name"] for c in resp]  # type: ignore[list-item]
+
+    # 4) If a "chunks" collection is already there, open it and check metadata
+    if "chunks" in existing_names:
         coll = client.get_collection("chunks")
         existing_method = coll.metadata.get("emb_method")
         if existing_method == emb_method:
             return client, coll
         else:
-            # Mismatch: the folder/collection exists but uses a different embedding
+            # Mismatch: the folder/collection exists but uses a different embedding method
             return None
 
-    # 4) If it does not exist yet, create it with the given embedding method in metadata
+    # 5) Otherwise, create a fresh "chunks" collection with the given embedding method
     coll = client.create_collection(
         name="chunks",
         metadata={"emb_method": emb_method}

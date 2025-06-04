@@ -30,20 +30,13 @@ import gridfs
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
-# Pull **all** of the Unstructured loaders from langchain_community to avoid
-# the new “deprecated import” warnings.
-from langchain_community.document_loaders import (
-    UnstructuredPDFLoader,
+from langchain_community.document_loaders import UnstructuredPDFLoader
+from langchain.document_loaders import (
+    TextLoader,
     UnstructuredWordDocumentLoader,
     UnstructuredPowerPointLoader,
 )
-from langchain.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
-
-# If PDFMiner yields almost no text (i.e. scanned PDF), do per‐page OCR:
-from pdf2image import convert_from_path
-import pytesseract
 
 from chromadb import Client
 from chromadb.config import Settings
@@ -57,8 +50,8 @@ class EmbFileAda3LargeAgent:
     Agent that:
       1. Accepts a single string `file_id` of the form "collection/path/to/file.ext"
       2. Fetches the file from MongoDB/GridFS
-      3. Splits into chunks via LangChain (trying PDFMiner first for .pdf, then OCR if needed)
-      4. Calls Azure OpenAI's Ada‐3‐large embeddings endpoint (with retries) for each chunk
+      3. Chooses the correct LangChain loader & splits it into chunks
+      4. Calls Azure OpenAI's Ada-3-large embeddings endpoint (with retries) for each chunk
       5. Connects to Chroma (one folder per collection, sharded). If the Chroma collection
          already exists with a matching emb_method, open it; if it exists but emb_method
          mismatches, return an error; if it doesn’t exist, create it.
@@ -66,7 +59,7 @@ class EmbFileAda3LargeAgent:
          (so new versions overwrite old embeddings).
       7. Inserts each chunk’s embedding vector, raw text, and metadata (path, filename,
          chunk_number, emb_method) into Chroma.
-      8. Returns a JSON‐compatible dict with "status" (HTTP‐style code) and either
+      8. Returns a JSON-compatible dict with "status" (HTTP-style code) and either
          "message" or "error".
     """
 
@@ -81,7 +74,7 @@ class EmbFileAda3LargeAgent:
         except PyMongoError as e:
             raise RuntimeError(f"Could not connect to MongoDB: {e}")
 
-        # === 2) Azure OpenAI Ada‐3‐large config ===
+        # === 2) Azure OpenAI Ada-3-large config ===
         self.azure_endpoint = os.environ["AZURE_ENDPOINT"]
         self.azure_key = os.environ["AZURE_KEY"]
         self.azure_deployment = os.environ["AZURE_ADA3LARGE_DEPLOYMENT"]
@@ -102,9 +95,9 @@ class EmbFileAda3LargeAgent:
 
     def embed_text(self, text: str) -> list[float]:
         """
-        Call Azure OpenAI Ada‐3‐large embeddings endpoint with retries on rate‐limit (429).
+        Call Azure OpenAI Ada-3-large embeddings endpoint with retries on rate-limit (429).
         Returns the embedding vector as a list of floats.
-        Raises Exception on non‐429 errors or if max retries exceeded.
+        Raises Exception on non-429 errors or if max retries exceeded.
         """
         max_retries = 5
         backoff = 1
@@ -115,7 +108,7 @@ class EmbFileAda3LargeAgent:
                 resp = requests.post(self.azure_url, json=payload, headers=self.headers, timeout=30)
 
                 if resp.status_code == 429:
-                    # Rate‐limited: wait & retry
+                    # Rate-limited: wait & retry
                     time.sleep(backoff)
                     backoff *= 2
                     continue
@@ -134,70 +127,34 @@ class EmbFileAda3LargeAgent:
             except Exception as exc:
                 raise RuntimeError(f"Error calling embedding endpoint: {exc}")
 
-        raise RuntimeError("Exceeded max retries for embedding call (rate‐limited)")
+        raise RuntimeError("Exceeded max retries for embedding call (rate-limited)")
 
-    def load_and_chunk(self, local_path: str, extension: str) -> list[Document]:
+    def load_and_chunk(self, local_path: str, extension: str) -> list:
         """
-        Given a local file path and its extension, load it with:
-          - For .pdf: first attempt UnstructuredPDFLoader (PDFMiner); if the extracted text is
-            almost empty, fall back to OCR on each page via pdf2image + pytesseract.
-          - For .txt/.md/.text: TextLoader
-          - For .docx/.doc: UnstructuredWordDocumentLoader
-          - For .pptx/.ppt: UnstructuredPowerPointLoader
-
-        Then split the resulting list of Document(page_content=...) objects using
-        RecursiveCharacterTextSplitter. Returns a list of chunk‐Documents.
+        Given a local file path and its extension, load it with the appropriate LangChain loader
+        and split it into chunks using RecursiveCharacterTextSplitter.
+        Returns a list of Document objects (each with .page_content).
         """
         ext = extension.lower()
-        docs: list[Document]
-
         if ext == ".pdf":
-            # 1) Try text‐based extraction via UnstructuredPDFLoader
             loader = UnstructuredPDFLoader(local_path)
-            try:
-                docs = loader.load()
-            except Exception:
-                # If that fails, treat as empty so we can fall back to OCR
-                docs = []
-
-            # 2) If the total text is essentially empty, do a quick OCR pass page by page
-            total_text = "".join(d.page_content or "" for d in docs).strip()
-            if len(total_text) < 50:
-                # Fallback to OCR for each page
-                try:
-                    page_images = convert_from_path(local_path)
-                except Exception as e:
-                    raise RuntimeError(f"Failed to convert PDF to images for OCR: {e}")
-
-                ocr_docs: list[Document] = []
-                for img in page_images:
-                    page_text = pytesseract.image_to_string(img)
-                    ocr_docs.append(Document(page_content=page_text))
-                docs = ocr_docs
-
         elif ext in [".txt", ".md", ".text"]:
             loader = TextLoader(local_path, encoding="utf-8")
-            docs = loader.load()
-
         elif ext in [".docx", ".doc"]:
             loader = UnstructuredWordDocumentLoader(local_path)
-            docs = loader.load()
-
         elif ext in [".pptx", ".ppt"]:
             loader = UnstructuredPowerPointLoader(local_path)
-            docs = loader.load()
-
         else:
             raise ValueError(f"Unsupported file extension: '{extension}'")
 
-        # 3) Now split all loaded Documents into chunks using RecursiveCharacterTextSplitter
+        docs = loader.load()
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
             add_start_index=True,
         )
-        chunked = splitter.split_documents(docs)
-        return chunked
+        splits = splitter.split_documents(docs)
+        return splits
 
     def handle(self, request_json: dict) -> dict:
         """
@@ -206,10 +163,10 @@ class EmbFileAda3LargeAgent:
 
         Returns a dict:
           { "id": "...", "object": "...", "created": <timestamp>,
-            "status": <HTTP‐code>, "message": "...", ... }
+            "status": <HTTP-code>, "message": "...", ... }
           or
           { "id": "...", "object": "...", "created": <timestamp>,
-            "status": <HTTP‐code>, "error": "..." } on failure.
+            "status": <HTTP-code>, "error": "..." } on failure.
         """
         result = {
             "id":      "emb_file_ada3large_response",
@@ -235,7 +192,7 @@ class EmbFileAda3LargeAgent:
 
         collection_name, file_path = file_identifier.split("/", 1)
 
-        # 2) Retrieve the file from GridFS
+        # 2) Retrieve the file from GridFS (pass filter via metadata= keyword)
         try:
             gf = self.fs.get_last_version(
                 metadata={"collection": collection_name, "path": file_path}
@@ -270,7 +227,7 @@ class EmbFileAda3LargeAgent:
             })
             return result
 
-        # 4) Load + chunk the file (with text→OCR fallback for PDFs)
+        # 4) Load + chunk the file
         try:
             splits = self.load_and_chunk(local_path, extension)
         except Exception as exc:

@@ -97,7 +97,7 @@ def main():
             flow_url,
             json=flow_payload,
             verify=False,
-            timeout=120
+            timeout=600
         )
         flow_resp.raise_for_status()
     except Exception as e:

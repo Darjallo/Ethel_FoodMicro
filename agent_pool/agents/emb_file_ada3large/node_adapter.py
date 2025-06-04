@@ -46,7 +46,7 @@ def emb_file_ada3large_node(
         # Ensure no streaming parameter is sent
         payload["stream"] = False
 
-        resp = requests.post(url, json=payload, timeout=60)
+        resp = requests.post(url, json=payload, timeout=600)
         resp.raise_for_status()
         data = resp.json()
         yield {output_key: data}

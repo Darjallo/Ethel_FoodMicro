@@ -1,6 +1,12 @@
 FROM python:3.11-slim
 WORKDIR /app
 
+RUN apt-get update
+RUN apt-get install -y libgl1-mesa-glx
+RUN apt-get install -y libglib2.0-0
+RUN apt-get install -y poppler-utils
+RUN apt-get install -y tesseract-ocr-all 
+
 COPY agent_pool/agents/emb_file_ada3large/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -10,6 +16,7 @@ COPY agent_pool/base_vector_db.py agent_pool/base_vector_db.py
 COPY agent_pool/agents/emb_file_ada3large/ agent_pool/agents/emb_file_ada3large/
 
 ENV PYTHONPATH=/app
+ENV OCR_AGENT=tesseract
 
 WORKDIR /app/agent_pool/agents/emb_file_ada3large
 
