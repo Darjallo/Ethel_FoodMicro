@@ -6,4 +6,8 @@ or
 
 sudo docker build -f agent_pool/agents/emb_file_ada3large/Dockerfile -t emb_file_ada3large:latest .
 
+or
+
+sudo docker build -f agent_pool/agents/emb_similarity_ada3large/Dockerfile -t emb_similarity_ada3large:latest .
+
 respectively.
