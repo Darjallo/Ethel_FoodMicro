@@ -37,7 +37,8 @@ from langchain_community.document_loaders import (
     UnstructuredWordDocumentLoader,
     UnstructuredPowerPointLoader,
 )
-from langchain.document_loaders import TextLoader
+from langchain_community.document_loaders import TextLoader
+#from langchain.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 
@@ -49,7 +50,7 @@ from chromadb import Client
 from chromadb.config import Settings
 
 from agent_pool.base_agent_server import run_server
-from agent_pool.base_vector_db import open_chroma_for
+from agent_pool.base_vector_db import open_chroma_for, sharded_path
 
 
 class EmbFileAda3LargeAgent:
@@ -67,7 +68,7 @@ class EmbFileAda3LargeAgent:
       7. Inserts each chunk’s embedding vector, raw text, and metadata (path, filename,
          chunk_number, emb_method) into Chroma.
       8. Returns a JSON‐compatible dict with "status" (HTTP‐style code) and either
-         "message" or "error".
+         "message" or "error". Also prints debug info to container logs.
     """
 
     def __init__(self):
@@ -163,7 +164,7 @@ class EmbFileAda3LargeAgent:
             # 2) If the total text is essentially empty, do a quick OCR pass page by page
             total_text = "".join(d.page_content or "" for d in docs).strip()
             if len(total_text) < 50:
-                # Fallback to OCR for each page
+                print("[DEBUG] PDFMiner extracted too little text (len < 50); falling back to OCR", flush=True)
                 try:
                     page_images = convert_from_path(local_path)
                 except Exception as e:
@@ -210,6 +211,7 @@ class EmbFileAda3LargeAgent:
           or
           { "id": "...", "object": "...", "created": <timestamp>,
             "status": <HTTP‐code>, "error": "..." } on failure.
+        Debug prints appear in container logs (stdout).
         """
         result = {
             "id":      "emb_file_ada3large_response",
@@ -304,13 +306,19 @@ class EmbFileAda3LargeAgent:
 
         client, chr_collection = chroma_result
 
+        # --- DEBUG: print out which folder we are writing into and whether we opened or created ---
+        base_dir = os.getenv("CHROMA_BASE_DIR", "/chroma_db")
+        folder   = os.path.join(base_dir, sharded_path(collection_name))
+        print(f"[DEBUG] Chroma folder path: {folder}", flush=True)
+
         # 6) Delete any existing embeddings for this same file_path
         try:
+            print(f"[DEBUG] Deleting existing embeddings for path '{file_path}' in collection '{collection_name}'", flush=True)
             chr_collection.delete(where={"path": file_path})
         except Exception:
             # If the collection was just created and is empty, delete() might raise
             # or simply do nothing. Ignore any errors here.
-            pass
+            print("[DEBUG] delete(...) on newly created collection may have failed or had nothing to delete.", flush=True)
 
         # 7) Embed each chunk and collect data for insertion
         embeddings = []
@@ -350,6 +358,7 @@ class EmbFileAda3LargeAgent:
 
         # 8) Insert into Chroma
         try:
+            print(f"[DEBUG] Adding {len(embeddings)} chunks to Chroma collection '{collection_name}'", flush=True)
             chr_collection.add(
                 ids=ids,
                 embeddings=embeddings,
@@ -368,13 +377,40 @@ class EmbFileAda3LargeAgent:
             })
             return result
 
-        # 9) Cleanup temp file
+        # 9) Show folder contents before persist
+        try:
+            before = []
+            for root, dirs, files in os.walk(folder):
+                for f in files:
+                    before.append(os.path.relpath(os.path.join(root, f), folder))
+            print(f"[DEBUG] Contents of {folder} BEFORE persist(): {before}", flush=True)
+        except Exception as e:
+            print(f"[DEBUG] Failed to list {folder} before persist: {e}", flush=True)
+
+        # 10) Force‐write to disk before returning
+        try:
+            print("[DEBUG] Calling client.persist()", flush=True)
+            client.persist()
+        except Exception as e:
+            print(f"[DEBUG] Exception during client.persist(): {e}", flush=True)
+
+        # 11) Show folder contents after persist
+        try:
+            after = []
+            for root, dirs, files in os.walk(folder):
+                for f in files:
+                    after.append(os.path.relpath(os.path.join(root, f), folder))
+            print(f"[DEBUG] Contents of {folder} AFTER persist(): {after}", flush=True)
+        except Exception as e:
+            print(f"[DEBUG] Failed to list {folder} after persist: {e}", flush=True)
+
+        # 12) Cleanup temp file
         try:
             os.remove(local_path)
         except OSError:
             pass
 
-        # 10) Success
+        # 13) Success
         num_chunks = len(splits)
         result.update({
             "status": 200,

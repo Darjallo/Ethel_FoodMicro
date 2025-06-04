@@ -19,9 +19,11 @@
 # agent_pool/base_vector_db.py
 
 import os
-from chromadb import Client
+from typing import Optional, Tuple
+
+# ← NEW: import PersistentClient instead of Client
+from chromadb import PersistentClient
 from chromadb.config import Settings
-from typing import Optional, Tuple, Union, Dict, List, Any
 
 def sharded_path(collection_name: str) -> str:
     """
@@ -42,7 +44,7 @@ def sharded_path(collection_name: str) -> str:
 def open_chroma_for(
     collection_name: str,
     emb_method: str
-) -> Optional[Tuple[Client, object]]:
+) -> Optional[Tuple[PersistentClient, object]]:
     """
     Open (or create) a Chroma “chunks” collection inside a sharded folder for `collection_name`.
     - If the sharded folder/Chroma DB does not exist, create it and then create a new Chroma collection
@@ -60,14 +62,15 @@ def open_chroma_for(
     folder = os.path.join(base_dir, sharded_path(collection_name))
     os.makedirs(folder, exist_ok=True)
 
-    # 2) Instantiate a Chroma client pointing at that folder
-    #    Note: remove the deprecated `chroma_db_impl` argument and only pass valid fields.
-    client = Client(
-        settings=Settings(
-            persist_directory=folder,
-            anonymized_telemetry=False
-        )
-    )
+    # 2) Instantiate a *PersistentClient* pointing at that folder
+    #    The “path” argument tells Chroma where to place its on-disk SQLite/Parquet files.
+    try:
+        client = PersistentClient(path=folder)
+    except Exception as e:
+        # If something goes wrong here, it’s often because the directory
+        # isn’t writeable or the format is wrong.
+        print(f"[DEBUG] Failed to create PersistentClient at {folder}: {e}", flush=True)
+        return None
 
     # 3) List existing collections. Newer Chroma returns a list; older returned {"collections": [...]}
     resp = client.list_collections()
@@ -75,7 +78,7 @@ def open_chroma_for(
         # old style
         existing_names = [c["name"] for c in resp["collections"]]
     else:
-        # new style returns a List of metadata objects, each having a "name" key
+        # new style returns a list of metadata objects, each having a "name" key
         existing_names = [c["name"] for c in resp]  # type: ignore[list-item]
 
     # 4) If a "chunks" collection is already there, open it and check metadata
@@ -83,9 +86,11 @@ def open_chroma_for(
         coll = client.get_collection("chunks")
         existing_method = coll.metadata.get("emb_method")
         if existing_method == emb_method:
+            print(f"[DEBUG] Opening existing 'chunks' in {folder} with emb_method={emb_method}", flush=True)
             return client, coll
         else:
             # Mismatch: the folder/collection exists but uses a different embedding method
+            print(f"[DEBUG] Metadata mismatch in {folder}: had emb_method={existing_method}, expected {emb_method}", flush=True)
             return None
 
     # 5) Otherwise, create a fresh "chunks" collection with the given embedding method
@@ -93,5 +98,6 @@ def open_chroma_for(
         name="chunks",
         metadata={"emb_method": emb_method}
     )
+    print(f"[DEBUG] Created new 'chunks' in {folder} with emb_method={emb_method}", flush=True)
     return client, coll
 
