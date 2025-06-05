@@ -19,11 +19,11 @@
 # agent_pool/base_vector_db.py
 
 import os
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any, Dict
 
-# ← NEW: import PersistentClient instead of Client
 from chromadb import PersistentClient
 from chromadb.config import Settings
+
 
 def sharded_path(collection_name: str) -> str:
     """
@@ -44,60 +44,84 @@ def sharded_path(collection_name: str) -> str:
 def open_chroma_for(
     collection_name: str,
     emb_method: str
-) -> Optional[Tuple[PersistentClient, object]]:
+) -> Optional[Tuple[PersistentClient, Any]]:
     """
-    Open (or create) a Chroma “chunks” collection inside a sharded folder for `collection_name`.
-    - If the sharded folder/Chroma DB does not exist, create it and then create a new Chroma collection
-      named "chunks" with metadata {"emb_method": emb_method}.
-    - If it does exist:
-        • If the existing collection’s metadata["emb_method"] == emb_method, return (client, collection).
+    Open (or create) a Chroma “default” collection inside a sharded folder for `collection_name`.
+    - If the sharded folder/Chroma DB does not exist, mkdir it and create a new Chroma
+      collection named "default" with metadata {"emb_method": emb_method}.
+    - If it already exists:
+        • If an existing “default” collection’s metadata["emb_method"] == emb_method,
+          return (client, coll).
         • Otherwise, return None (indicating a mismatch).
 
     Returns:
         (chroma_client, chroma_collection)  on success,
-        None                               if the collection already exists with a different emb_method.
+        None                               if this folder already had a different emb_method.
     """
-    # 1) Compute the sharded directory on disk
     base_dir = os.getenv("CHROMA_BASE_DIR", "/chroma_db")
     folder = os.path.join(base_dir, sharded_path(collection_name))
     os.makedirs(folder, exist_ok=True)
 
-    # 2) Instantiate a *PersistentClient* pointing at that folder
-    #    The “path” argument tells Chroma where to place its on-disk SQLite/Parquet files.
     try:
         client = PersistentClient(path=folder)
     except Exception as e:
-        # If something goes wrong here, it’s often because the directory
-        # isn’t writeable or the format is wrong.
+        # Often a permissions/format problem
         print(f"[DEBUG] Failed to create PersistentClient at {folder}: {e}", flush=True)
         return None
 
-    # 3) List existing collections. Newer Chroma returns a list; older returned {"collections": [...]}
-    resp = client.list_collections()
-    if isinstance(resp, dict) and "collections" in resp:
-        # old style
-        existing_names = [c["name"] for c in resp["collections"]]
-    else:
-        # new style returns a list of metadata objects, each having a "name" key
-        existing_names = [c["name"] for c in resp]  # type: ignore[list-item]
-
-    # 4) If a "chunks" collection is already there, open it and check metadata
-    if "chunks" in existing_names:
-        coll = client.get_collection("chunks")
+    # Try to open "default"
+    try:
+        coll = client.get_collection("default")
         existing_method = coll.metadata.get("emb_method")
         if existing_method == emb_method:
-            print(f"[DEBUG] Opening existing 'chunks' in {folder} with emb_method={emb_method}", flush=True)
+            # exact match; use it
             return client, coll
         else:
-            # Mismatch: the folder/collection exists but uses a different embedding method
-            print(f"[DEBUG] Metadata mismatch in {folder}: had emb_method={existing_method}, expected {emb_method}", flush=True)
+            # folder already has a collection under a different embedding method
+            print(
+                f"[DEBUG] Metadata mismatch in {folder}: "
+                f"found emb_method={existing_method}, expected={emb_method}",
+                flush=True
+            )
+            return None
+    except Exception:
+        # If get_collection("default") failed, it simply doesn’t exist yet → create it
+        try:
+            coll = client.create_collection(
+                name="default",
+                metadata={"emb_method": emb_method}
+            )
+            return client, coll
+        except Exception as e:
+            print(f"[DEBUG] Failed to create 'default' in {folder}: {e}", flush=True)
             return None
 
-    # 5) Otherwise, create a fresh "chunks" collection with the given embedding method
-    coll = client.create_collection(
-        name="chunks",
-        metadata={"emb_method": emb_method}
-    )
-    print(f"[DEBUG] Created new 'chunks' in {folder} with emb_method={emb_method}", flush=True)
-    return client, coll
+
+def get_chroma_collection(
+    collection_name: str
+) -> Optional[Any]:
+    """
+    Attempt to open the Chroma “default” collection for this `collection_name` shard.
+    If no such folder/collection exists, return None.
+
+    Returns:
+       Collection  on success
+       None        if the folder or "default" is missing.
+    """
+    base_dir = os.getenv("CHROMA_BASE_DIR", "/chroma_db")
+    shard_folder = os.path.join(base_dir, sharded_path(collection_name))
+
+    if not os.path.isdir(shard_folder):
+        # No shard folder means nothing was ever created for this collection.
+        return None
+
+    try:
+        client = PersistentClient(path=shard_folder)
+    except Exception:
+        return None
+
+    try:
+        return client.get_collection("default")
+    except Exception:
+        return None
 
