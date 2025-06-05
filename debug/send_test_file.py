@@ -4,6 +4,7 @@ import os
 import sys
 import requests
 import urllib3
+import json
 from urllib.parse import urljoin
 
 # Suppress the InsecureRequestWarning if you're using a self-signed cert
@@ -11,7 +12,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def main():
     p = argparse.ArgumentParser(
-        description="Upload a file to the Flow Manager /upload endpoint, then invoke the 'emb_file' flow"
+        description="Upload a file to the Flow Manager /upload endpoint, then invoke the 'emb_file' flow (streaming)."
     )
     p.add_argument("file", help="Local path to the file to upload")
     p.add_argument(
@@ -67,50 +68,63 @@ def main():
 
     try:
         upload_result = resp.json()
-        print("Upload response:", upload_result)
+        print("Upload response:", json.dumps(upload_result, indent=2))
     except ValueError:
         print("Upload non-JSON response:", resp.text)
         sys.exit(1)
 
-    # 2) Invoke the 'emb_file' flow
+    # 2) Invoke the 'emb_file' flow (streaming)
     # Determine the base Flow Manager URL (remove "/upload" suffix if present)
     if args.url.endswith("/upload"):
         base_url = args.url[: -len("/upload")]
     else:
-        # If the URL doesn’t literally end with "/upload", strip off path after the host
-        # e.g. "https://host:8000/upload" → "https://host:8000"
-        #       "https://host:8000/api/upload" → "https://host:8000/api"
         base_url = args.url.rsplit("/", 1)[0]
 
     flow_url = urljoin(base_url + "/", "")  # ensures trailing slash
-    print(f"Invoking 'emb_file' flow at {flow_url} …")
+    print(f"\nInvoking 'emb_file' flow at {flow_url} …\n")
 
     flow_payload = {
-        "flow": "emb_file",
-        "file_id": f"{args.collection}/{remote_path}",
-        "stream": False,
-        "flow_reload": False
+        "flow":          "emb_file",
+        "file_id":       f"{args.collection}/{remote_path}",
+        "stream":        True,
+        "flow_reload":   True
     }
 
     try:
+        # Note: stream=True here so we can iterate over lines as they arrive
         flow_resp = requests.post(
             flow_url,
             json=flow_payload,
             verify=False,
-            timeout=600
+            timeout=600,
+            stream=True
         )
         flow_resp.raise_for_status()
     except Exception as e:
         print("Flow invocation failed:", e, file=sys.stderr)
         sys.exit(1)
 
-    try:
-        flow_result = flow_resp.json()
-        print("Flow response:", flow_result)
-    except ValueError:
-        print("Flow non-JSON response:", flow_resp.text)
-        sys.exit(1)
+    # 3) Read and print each intermediate update
+    print("Streaming updates from the flow (one JSON object per line):\n")
+    update_count = 0
+    for line in flow_resp.iter_lines(decode_unicode=True):
+        if not line:
+            continue
+        update_count += 1
+        try:
+            parsed = json.loads(line)
+            print(f"=== Update #{update_count} ===")
+            print(json.dumps(parsed, indent=2))
+            print()  # blank line between updates
+        except ValueError:
+            # If a line is not valid JSON, just print it raw
+            print(f"=== Update #{update_count} (non-JSON) ===")
+            print(line)
+            print()
 
+    # 4) After streaming finishes, check if there was any closing JSON (in some setups)
+    #    Some servers may send a final JSON as part of the last line.
+    print(f"Stream ended after {update_count} update(s).")
 
 if __name__ == "__main__":
     main()

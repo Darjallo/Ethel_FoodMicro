@@ -46,7 +46,32 @@ services:
     environment:
       - MONGO_URI=mongodb://mongodb:27017
       - MONGO_DB=ethel_files
-        
+
+  chunk_text:
+    image: chunk_text:latest
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+    environment:
+      - CHUNK_SIZE=2000
+      - CHUNK_OVERLAP=400
+
+  store_vectors:
+    image: store_vectors:latest
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+    environment:
+      - CHROMA_BASE_DIR=/chroma_db
+    volumes:
+      - /var/lib/ethel/chroma_db:/chroma_db
+
   emb_file_ada3large:
     image: emb_file_ada3large:latest
     deploy:

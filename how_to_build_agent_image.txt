@@ -14,4 +14,8 @@ sudo docker build -t emb_ada3large:latest -f agent_pool/agents/emb_ada3large/Doc
 
 sudo docker build -t file_to_text:latest -f agent_pool/agents/file_to_text/Dockerfile .
 
+sudo docker build -t chunk_text:latest -f agent_pool/agents/chunk_text/Dockerfile .
+
+sudo docker build -t store_vectors:latest -f agent_pool/agents/store_vectors/Dockerfile .
+
 respectively.
