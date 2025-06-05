@@ -12,9 +12,6 @@ services:
       - ethel_net
     ports:
       - "8000:8000" 
-    env_file:
-      - ./secret/.env
-      - ./secret/emb_ada3large/.env
     volumes:
       - /etc/letsencrypt/fullchain.pem:/run/certs/fullchain.pem:ro
       - /etc/letsencrypt/privkey.pem:/run/certs/privkey.pem:ro
@@ -26,6 +23,18 @@ services:
       - SSL_KEY_PATH=/run/certs/privkey.pem
       - SSL_PORT=8000
 
+  emb_ada3large:
+    image: emb_ada3large:latest
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+    env_file:
+      - ./secret/.env
+      - ./secret/emb_file_ada3large/.env
+        
   emb_file_ada3large:
     image: emb_file_ada3large:latest
     deploy:
