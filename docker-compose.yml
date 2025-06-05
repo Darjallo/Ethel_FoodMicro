@@ -34,6 +34,18 @@ services:
     env_file:
       - ./secret/.env
       - ./secret/emb_file_ada3large/.env
+
+  file_to_text:
+    image: file_to_text:latest
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB=ethel_files
         
   emb_file_ada3large:
     image: emb_file_ada3large:latest

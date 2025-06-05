@@ -12,4 +12,6 @@ sudo docker build -f agent_pool/agents/emb_similarity_ada3large/Dockerfile -t em
 
 sudo docker build -t emb_ada3large:latest -f agent_pool/agents/emb_ada3large/Dockerfile .
 
+sudo docker build -t file_to_text:latest -f agent_pool/agents/file_to_text/Dockerfile .
+
 respectively.
