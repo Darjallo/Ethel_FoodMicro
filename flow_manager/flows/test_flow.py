@@ -20,7 +20,9 @@
 
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
+
 from .nodes import test_agent_node, emb_ada3large_node
+
 
 class TestFlowState(TypedDict, total=False):
     # Inputs from the user
@@ -31,7 +33,7 @@ class TestFlowState(TypedDict, total=False):
     # Output of the first node (“test_agent”), which is an OpenAI‐style dict
     test_agent_result: dict
 
-    # Output of the second node (embedding vector)
+    # Output of the second node (single embedding vector)
     emb_ada3large_result: list[float]
 
 
@@ -56,24 +58,26 @@ def run(context=None, query=None, file_id=None, stream=False):
         output_key="test_agent_result"
     )
 
-    # 2) Build the base embedding‐factory (it expects state["text"] to be a string)
-    base_emb_fn = emb_ada3large_node(
-        input_text_key="text",                # it will look in state["text"]
-        output_key="emb_ada3large_result"
+    # 2) Build the batch‐embedding factory:
+    #    It now expects a list of strings under state["texts"]
+    batch_emb_fn = emb_ada3large_node(
+        input_text_key="texts",                 # read state["texts"] (a list[str])
+        output_key="emb_ada3large_batch"        # write state["emb_ada3large_batch"] (list of vectors)
     )
 
-    # 3) Wrap around base_emb_fn to extract the string from test_agent_result:
+    # 3) Wrap around batch_emb_fn to extract exactly one string from test_agent_result,
+    #    call batch_emb_fn with {"texts": [that_string]}, then unwrap the first vector.
     def emb_wrapper_node(state_dict: dict):
         """
         1) Pull the raw OpenAI‐style dict from state["test_agent_result"].
-        2) Extract choices[0]["message"]["content"].
-        3) Call base_emb_fn with a new small dict {"text": that_string}.
-        4) Yield exactly the { "emb_ada3large_result": vector } that base_emb_fn yields.
+        2) Extract choices[0]["message"]["content"] as a string.
+        3) Call batch_emb_fn with {"texts": [assistant_text]}.
+        4) From the returned { "emb_ada3large_batch": [ [vec] ] }, extract vec → yield
+           { "emb_ada3large_result": vec }.
         """
-        raw = state_dict.get("test_agent_result", {})
+        raw = state_dict.get("test_agent_result", {}) or {}
         assistant_text = ""
         try:
-            # Traverse to choices[0]["message"]["content"]
             choices = raw.get("choices", [])
             if isinstance(choices, list) and len(choices) > 0:
                 msg = choices[0].get("message", {})
@@ -81,11 +85,23 @@ def run(context=None, query=None, file_id=None, stream=False):
         except Exception:
             assistant_text = ""
 
-        # Now call the embedding factory as if we had state={"text": assistant_text}
-        # base_emb_fn returns an iterator; we “yield from” it to pass through {emb_…: vector}
-        yield from base_emb_fn({"text": assistant_text})
+        # Wrap into a one‐element list for batch embedding
+        batch_input = {"texts": [assistant_text]}
 
-    # 4) Register nodes in the graph:
+        # batch_emb_fn returns an iterator that yields a dict like:
+        #   {"emb_ada3large_batch": [ [float, float, …], … ]}
+        for output in batch_emb_fn(batch_input):
+            batch_list = output.get("emb_ada3large_batch", [])
+            # take the first vector (since we only passed one input)
+            single_vec: list[float] = []
+            if isinstance(batch_list, list) and len(batch_list) > 0:
+                first_item = batch_list[0]
+                if isinstance(first_item, list):
+                    single_vec = first_item
+            # yield in the old format (single vector under "emb_ada3large_result")
+            yield {"emb_ada3large_result": single_vec}
+
+    # 4) Register nodes:
     builder.add_node("call_test_agent", test_agent_fn)
     builder.add_node("call_embedding", emb_wrapper_node)
 
