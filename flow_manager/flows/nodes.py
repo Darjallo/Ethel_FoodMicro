@@ -23,6 +23,7 @@ from agent_pool.agents.emb_similarity_ada3large.node_adapter import emb_similari
 from agent_pool.agents.file_to_text.node_adapter import file_to_text_node
 from agent_pool.agents.chunk_text.node_adapter import chunk_text_node
 from agent_pool.agents.store_vectors.node_adapter import store_vectors_node
+from agent_pool.agents.reasoning_completion.node_adapter import reasoning_completion_node
 
 
 # ... and register them
@@ -31,6 +32,7 @@ NODES = {
     "emb_similarity_ada3large" : emb_similarity_ada3large_node,
     "file_to_text" : file_to_text_node,
     "chunk_text" : chunk_text_node,
-    "store_vectors" : store_vectors_node
+    "store_vectors" : store_vectors_node,
+    "reasoning_completion" : reasoning_completion_node
 }
 
