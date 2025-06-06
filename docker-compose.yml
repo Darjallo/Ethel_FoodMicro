@@ -23,6 +23,18 @@ services:
       - SSL_KEY_PATH=/run/certs/privkey.pem
       - SSL_PORT=8000
 
+  reasoning_completion:
+    image: reasoning_completion:latest
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+    env_file:
+      - ./secret/.env
+      - ./secret/reasoning_completion/.env
+
   emb_ada3large:
     image: emb_ada3large:latest
     deploy:
