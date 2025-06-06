@@ -33,7 +33,7 @@ services:
       - ethel_net
     env_file:
       - ./secret/.env
-      - ./secret/emb_file_ada3large/.env
+      - ./secret/emb_ada3large/.env
 
   file_to_text:
     image: file_to_text:latest
@@ -72,24 +72,6 @@ services:
     volumes:
       - /var/lib/ethel/chroma_db:/chroma_db
 
-  emb_file_ada3large:
-    image: emb_file_ada3large:latest
-    deploy:
-      replicas: 5
-      restart_policy:
-        condition: on-failure
-    networks:
-      - ethel_net
-    env_file:
-      - ./secret/.env
-      - ./secret/emb_file_ada3large/.env
-    environment:
-      - MONGO_URI=mongodb://mongodb:27017
-      - MONGO_DB=ethel_files
-      - CHROMA_BASE_DIR=/chroma_db
-    volumes:
-      - /var/lib/ethel/chroma_db:/chroma_db
-
   emb_similarity_ada3large:
     image: emb_similarity_ada3large:latest
     deploy:
@@ -102,15 +84,6 @@ services:
       - CHROMA_BASE_DIR=/chroma_db
     volumes:
       - /var/lib/ethel/chroma_db:/chroma_db
-
-  test_agent:
-    image: test_agent:latest
-    deploy:
-      replicas: 5
-      restart_policy:
-        condition: on-failure
-    networks:
-      - ethel_net
 
   mongodb:
     image: mongo:6.0
