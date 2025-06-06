@@ -1,7 +1,10 @@
-# Project Ethel  
-## Flow Manager  
+# Project Ethel
 
-> **Flow Manager** is a lightweight orchestration layer for executing multi-step “flows” of micro-services (agents). It offers both streaming and non-streaming modes, mimicking the OpenAI Chat Completion API pattern, and is fully extensible via custom flows and agents.
+## Flow Manager
+
+**Flow Manager** is a lightweight orchestration layer for executing multi-step “flows” of micro-services (agents). It offers both streaming and non-streaming modes, mimicking the OpenAI Chat Completion API pattern, and is fully extensible via custom flows and agents.
+
+---
 
 ## Table of Contents
 
@@ -14,20 +17,21 @@
 7. [Hot-Reloading Flows](#hot-reloading-flows)  
 8. [Docker & Deployment](#docker--deployment)  
 9. [Extending with New Flows & Agents](#extending-with-new-flows--agents)  
-10. [Example: `test_flow` & `test_agent`](#example-test_flow--test_agent)  
-11. [License](#license)  
+10. [License](#license)  
 
 ---
 
 ## Overview
 
-The Flow Manager exposes two endpoints:
+The Flow Manager exposes the following endpoints:
 
 - **POST /**: invoke a flow  
 - **POST /upload**: upload a binary asset into MongoDB/GridFS  
 - **GET /files/**: list collections, directories, or fetch files
 
-Each flow is defined as a small DAG of “nodes” via [langgraph], and each node invokes an external micro-service (“agent”).  
+Each flow is defined as a small DAG of “nodes” via [langgraph], and each node invokes an external micro-service (“agent”).
+
+---
 
 ## Getting Started
 
@@ -39,6 +43,8 @@ pip install -r flow_manager/requirements.txt
 docker-compose up --build
 ```
 
+---
+
 ## Flow Manager API
 
 ### Invoke a Flow
@@ -48,16 +54,18 @@ POST / HTTP/1.1
 Content-Type: application/json
 
 {
-  "flow": "test_flow",
-  "context": { "courseID":"CS101", "userID":"alice" },
-  "query": { /* flow-specific params */ },
+  "flow": "your_flow_name",
+  "context": { /* optional context dict */ },
+  "query": { /* flow-specific parameters */ },
   "stream": true|false,        # defaults to false
-  "flow_reload": true|false    # hot-reload your flow module
+  "flow_reload": true|false    # hot-reload the flow code
 }
 ```
 
 - **Non-streaming** (`stream=false`): returns a single JSON object (final state).  
-- **Streaming** (`stream=true`): returns a chunked response; each chunk is a JSON update for a node.  
+- **Streaming** (`stream=true`): returns a chunked response; each chunk is a JSON update for a node.
+
+---
 
 ### Upload Assets
 
@@ -72,6 +80,8 @@ Fields:
 ```
 
 Stores in MongoDB/GridFS under the given metadata. Re-uploading the same collection+path replaces the old file.
+
+---
 
 ### List & Fetch Assets
 
@@ -95,6 +105,8 @@ or
 ```
 Fetching a file returns the raw bytes with correct `Content-Type`.
 
+---
+
 ## Asset Management
 
 Assets live in MongoDB/GridFS, keyed by `metadata.collection` and `metadata.path`. The Flow Manager’s `asset_handler.py` encapsulates:
@@ -103,36 +115,45 @@ Assets live in MongoDB/GridFS, keyed by `metadata.collection` and `metadata.path
 - listing: collection & directory traversal  
 - file serving with MIME detection  
 
+---
+
 ## Flows
 
 Flows reside in `flow_manager/flows/`. Each flow module:
 
-- Defines a TypedDict schema for its state  
-- Builds a DAG via `StateGraph` (add_node/add_edge)  
-- Exposes `run(context, query={}, stream=False)` as a generator
+1. Defines a TypedDict schema for its state  
+2. Builds a DAG via `StateGraph` (add_node/add_edge)  
+3. Exposes `run(context, query={}, stream=False)` as a generator
+
+To invoke a flow, POST to `/` with `"flow": "<flow_name>"` in the JSON body.
+
+---
 
 ## Agents
 
 Agents live in `agent_pool/agents/<agent_name>/`. Each directory contains:
 
-- `agent.py`: HTTP server implementing `handle(request)` and optional `stream(request)`  
-- `node_adapter.py`: client adapter invoked by Flow Manager  
+- `agent.py`: HTTP server implementing `handle(request)` (and optionally streaming).  
+- `node_adapter.py`: client adapter invoked by the Flow Manager to call that agent.
 
 Agents follow an OpenAI-like pattern:
-- non-stream: return one JSON  
-- stream: yield newline-joined JSON chunks
+- non-stream: return one JSON object  
+- stream: yield newline-separated JSON chunks
+
+---
 
 ## Hot-Reloading Flows
 
-Send `"flow_reload": true` in your POST body to force the Flow Manager to `importlib.reload(...)` your flow module before invocation. Great for rapid development without restarting the server.
+Send `"flow_reload": true` in your POST body to force the Flow Manager to reload your flow module before invocation. Great for rapid development without restarting the server.
+
+---
 
 ## Docker & Deployment
 
 A sample `docker-compose.yml` sets up:
 - `flow_manager` service  
-- your agents (e.g. `test_agent`)  
+- your agents (e.g. `file_to_text`, `chunk_text`, `emb_ada3large`, `store_vectors`)  
 - MongoDB (with GridFS)  
-- Milvus for embeddings  
 
 Mount your local `flow_manager/flows` directory into the container for hot-updates:
 
@@ -141,26 +162,23 @@ volumes:
   - ./flow_manager/flows:/app/flows:ro
 ```
 
+---
+
 ## Extending with New Flows & Agents
 
 ### Add an Agent
 
-1. Create `agent_pool/agents/<your_agent>/agent.py` with `handle` and/or `stream`.  
+1. Create `agent_pool/agents/<your_agent>/agent.py` with a `handle(request)` (and optionally `stream(...)`).  
 2. Create `agent_pool/agents/<your_agent>/node_adapter.py` to call your HTTP endpoint.  
 
 ### Add a Flow
 
 1. In `flow_manager/flows/`, create `<your_flow>.py` and implement `run(...)`.  
-2. Register your node-adapters in `flow_manager/flows/nodes.py`.  
+2. Register your node-adapter in `flow_manager/flows/nodes.py`.  
 
 Reinvoke flows with `"flow_reload": true` to pick up changes without restarting.
 
-## Example: `test_flow` & `test_agent`
-
-- **test_flow**: a one-node flow calling `test_agent`.  
-- **test_agent**: echoes back with a timestamp; supports both streaming (char-by-char) and non-streaming.  
-
-Use these as templates.
+---
 
 ## License
 
@@ -182,4 +200,4 @@ Use these as templates.
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-```  
+```
