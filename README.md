@@ -1,4 +1,8 @@
 # Project Ethel
+## Overview
+The diagram shows an overview of the system. Part of Ethel will be a chat interface and a grading interface at the front end, as well as a flow manager as the core. Different Large Language Models and Embeddings can be connected at the backend.
+
+![System Overview](overview_ethelflow.png)
 
 ## Flow Manager
 
