@@ -14,9 +14,12 @@ COPY ../agent_pool/agents/__init__.py agent_pool/agents/__init__.py
 COPY ../agent_pool/agents/reasoning_completion/node_adapter.py agent_pool/agents/reasoning_completion/node_adapter.py
 COPY ../agent_pool/agents/chunk_text/node_adapter.py agent_pool/agents/chunk_text/node_adapter.py
 COPY ../agent_pool/agents/emb_similarity_ada3large/node_adapter.py agent_pool/agents/emb_similarity_ada3large/node_adapter.py
+COPY ../agent_pool/agents/python_processor/node_adapter.py agent_pool/agents/python_processor/node_adapter.py
 COPY ../agent_pool/agents/file_to_text/node_adapter.py agent_pool/agents/file_to_text/node_adapter.py
 COPY ../agent_pool/agents/emb_ada3large/node_adapter.py agent_pool/agents/emb_ada3large/node_adapter.py
 COPY ../agent_pool/agents/store_vectors/node_adapter.py agent_pool/agents/store_vectors/node_adapter.py
+COPY ../agent_pool/agents/r_processor/node_adapter.py agent_pool/agents/r_processor/node_adapter.py
+COPY ../agent_pool/agents/maxima_processor/node_adapter.py agent_pool/agents/maxima_processor/node_adapter.py
 
 EXPOSE 8000
 CMD ["python", "flow_manager.py"]

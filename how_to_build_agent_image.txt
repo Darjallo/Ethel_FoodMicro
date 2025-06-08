@@ -12,4 +12,12 @@ sudo docker build -t store_vectors:latest -f agent_pool/agents/store_vectors/Doc
 
 sudo docker build -t reasoning_completion:latest -f agent_pool/agents/reasoning_completion/Dockerfile .
 
+sudo docker build -t generic_processor:latest -f agent_pool/agents/generic_processor/Dockerfile .
+
+sudo docker build -t python_processor:latest -f agent_pool/agents/python_processor/Dockerfile .
+
+sudo docker build -t maxima_processor:latest -f agent_pool/agents/maxima_processor/Dockerfile .
+
+sudo docker build -t r_processor:latest -f agent_pool/agents/r_processor/Dockerfile .
+
 respectively.

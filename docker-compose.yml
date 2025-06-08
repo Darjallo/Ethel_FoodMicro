@@ -97,10 +97,51 @@ services:
     volumes:
       - /var/lib/ethel/chroma_db:/chroma_db
 
+  maxima_agent:
+    image: generic_processor:latest
+    # tells the container to run as a Maxima agent
+    environment:
+      - AGENT_TYPE=MAXIMA
+      - MAXIMA_IMAGE=maxima_processor:latest
+      - MAXIMA_CMD=maxima --very-quiet --batch-string
+      - TIMEOUT=15
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+
+  r_agent:
+    image: generic_processor:latest
+    environment:
+      - AGENT_TYPE=R
+      - R_IMAGE=r_processor:latest
+      - R_CMD=Rscript -e
+      - TIMEOUT=15
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+
+  python_agent:
+    image: generic_processor:latest
+    environment:
+      - AGENT_TYPE=PYTHON
+      - PYTHON_IMAGE=python_processor:latest
+      - PYTHON_CMD=python -I -c
+      - TIMEOUT=15
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+    networks:
+      - ethel_net
+
   mongodb:
     image: mongo:6.0
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
     environment:

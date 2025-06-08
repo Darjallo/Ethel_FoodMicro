@@ -24,6 +24,10 @@ from agent_pool.agents.file_to_text.node_adapter import file_to_text_node
 from agent_pool.agents.chunk_text.node_adapter import chunk_text_node
 from agent_pool.agents.store_vectors.node_adapter import store_vectors_node
 from agent_pool.agents.reasoning_completion.node_adapter import reasoning_completion_node
+from agent_pool.agents.maxima_processor.node_adapter import maxima_processor_node
+from agent_pool.agents.python_processor.node_adapter import python_processor_node
+from agent_pool.agents.r_processor.node_adapter import r_processor_node
+
 
 
 # ... and register them
@@ -33,6 +37,9 @@ NODES = {
     "file_to_text" : file_to_text_node,
     "chunk_text" : chunk_text_node,
     "store_vectors" : store_vectors_node,
-    "reasoning_completion" : reasoning_completion_node
+    "reasoning_completion" : reasoning_completion_node,
+    "process_maxima" : maxima_processor_node,
+    "process_python" : python_processor_node,
+    "process_r" : r_processor_node
 }
 
