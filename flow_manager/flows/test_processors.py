@@ -10,17 +10,26 @@ from .nodes import (
 )
 
 class CalcThreeState(TypedDict, total=False):
+    # (we ignore file_id/query here)
+    stream: bool
     script: str
     maxima_results: Dict[str, Any]
     python_results: Dict[str, Any]
     r_results:      Dict[str, Any]
 
-def run(context=None, query=None, stream=False) -> Iterator[Dict[str, Any]]:
+def run(context=None, query=None, file_id=None, stream=False) -> Iterator[Dict[str, Any]]:
+    """
+    1) set_maxima → process_maxima → state['maxima_results']
+    2) set_python → process_python → state['python_results']
+    3) set_r      → process_r      → state['r_results']
+    """
     state: CalcThreeState = {"stream": stream}
     builder = StateGraph(CalcThreeState)
 
     # 1) Maxima
-    builder.add_node("set_maxima", lambda s: ({"script": "6*7;"},))
+    def set_maxima(state_dict: dict) -> Iterator[dict]:
+        yield {"script": "6*7;"}
+    builder.add_node("set_maxima", set_maxima)
     builder.add_node(
         "process_maxima",
         maxima_processor_node(
@@ -30,7 +39,9 @@ def run(context=None, query=None, stream=False) -> Iterator[Dict[str, Any]]:
     )
 
     # 2) Python
-    builder.add_node("set_python", lambda s: ({"script": "print(6*7)"},))
+    def set_python(state_dict: dict) -> Iterator[dict]:
+        yield {"script": "print(6*7)"}
+    builder.add_node("set_python", set_python)
     builder.add_node(
         "process_python",
         python_processor_node(
@@ -40,7 +51,9 @@ def run(context=None, query=None, stream=False) -> Iterator[Dict[str, Any]]:
     )
 
     # 3) R
-    builder.add_node("set_r", lambda s: ({"script": "print(6*7)"},))
+    def set_r(state_dict: dict) -> Iterator[dict]:
+        yield {"script": "print(6*7)"}
+    builder.add_node("set_r", set_r)
     builder.add_node(
         "process_r",
         r_processor_node(
@@ -49,7 +62,7 @@ def run(context=None, query=None, stream=False) -> Iterator[Dict[str, Any]]:
         )
     )
 
-    # wire it up
+    # wire up the sequence
     builder.add_edge(START,            "set_maxima")
     builder.add_edge("set_maxima",     "process_maxima")
     builder.add_edge("process_maxima", "set_python")
@@ -59,6 +72,7 @@ def run(context=None, query=None, stream=False) -> Iterator[Dict[str, Any]]:
     builder.add_edge("process_r",      END)
 
     app = builder.compile()
+
     if stream:
         yield from app.stream(state)
     else:
