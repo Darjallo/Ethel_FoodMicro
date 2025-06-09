@@ -19,24 +19,22 @@
 import os
 import subprocess
 import traceback
-import base64
 from datetime import datetime
 from typing import Any, Dict
 from agent_pool.base_agent_server import run_server
 
 class ProgrammaticAgent:
     """
-    Base class for “script→container” agents.
-    Expects these env vars:
-      * <LANG>_IMAGE      e.g. MAXIMA_IMAGE="your-maxima-image"
-      * <LANG>_CMD        e.g. MAXIMA_CMD="maxima --very-quiet --batch-string"
-      * TIMEOUT           per-job timeout in seconds (default 15)
+    Base for “script→container” agents.
+    Env vars:
+      * <LANG>_IMAGE    e.g. MAXIMA_IMAGE="maxima_processor:latest"
+      * <LANG>_CMD      e.g. MAXIMA_CMD="maxima --very-quiet --batch-string"
+      * TIMEOUT         per-job timeout in seconds (default 15)
     """
     def __init__(self, lang: str):
         self.lang = lang.upper()
         self.image = os.environ[f"{self.lang}_IMAGE"]
-        # command split into list, e.g. ["python", "-I", "-c"]
-        self.cmd = os.environ[f"{self.lang}_CMD"].split()
+        self.cmd   = os.environ[f"{self.lang}_CMD"].split()
         self.timeout = int(os.getenv("TIMEOUT", "15"))
 
     def handle(self, request_json: Dict[str, Any]) -> Dict[str, Any]:
@@ -48,98 +46,88 @@ class ProgrammaticAgent:
 
         script = request_json.get("script")
         if not isinstance(script, str):
-            result.update({
-                "status": 400,
-                "error": "Missing or invalid 'script' field (must be a string)."
-            })
-            return result
+            return {**result, **{"status": 400, "error": "Missing or invalid 'script'."}}
 
-        # Base docker invocation flags
-        docker_base = [
+        # ─── Build docker run args ────────────────────────────────────────────
+        common_opts = [
             "docker", "run", "--rm",
-            "--net=none",                  # no network
-            "--read-only",                 # rootfs read-only
-            "--tmpfs", "/tmp:rw,size=64m", # only /tmp writable
-            "--user", "1000:1000",         # unprivileged user
-            "--cap-drop=ALL",              # drop all capabilities
-            "--security-opt", "no-new-privileges",
-            "--memory=256m",               # resource limits
+            "--net=none",
+            "--read-only",
+            "--tmpfs", "/tmp:rw,size=64m",
+            "--tmpfs", "/home/agentuser:rw,size=64m",
+            "--user", "1000:1000",
+            "--memory=256m",
             "--cpus=0.5",
-            self.image
         ]
 
-        try:
-            # Determine if script must be passed as CLI argument
-            cli_flags = {"-c", "-e", "--batch-string"}
-            passes_via_arg = any(flag in self.cmd for flag in cli_flags)
+        # drop all caps, plus optionally re-add SYS_ADMIN for Maxima
+        cap_opts = ["--cap-drop=ALL", "--security-opt", "no-new-privileges"]
+        if self.lang == "MAXIMA":
+            cap_opts.insert(1, "--cap-add=SYS_ADMIN")  # after drop
+            # …and disable seccomp so personality() can run
+            cap_opts += ["--security-opt", "seccomp=unconfined"]
 
-            if passes_via_arg:
-                # e.g. python -I -c "print(6*7)"
-                full_cmd = docker_base + self.cmd + [script]
-                proc = subprocess.run(
-                    full_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=self.timeout
-                )
+        # Final docker argv prefix:
+        docker_args = common_opts + cap_opts + [ self.image ]
+
+        # ─── Build the in-container command ────────────────────────────────────
+        if self.lang == "MAXIMA":
+            # maxima --very-quiet --batch-string="<script>"
+            exe = self.cmd[0]
+            other = [c for c in self.cmd[1:] if not c.startswith("--batch-string")]
+            batch = next(c for c in self.cmd if c.startswith("--batch-string"))
+            in_args = [ exe ] + other + [ f"{batch}={script}" ]
+            stdin = None
+
+        else:
+            # Python (-c) or Rscript (-e)
+            if any(flag in self.cmd for flag in ("-c","-e")):
+                in_args = self.cmd + [script]
+                stdin = None
             else:
-                # fallback: interpreter reads from stdin
-                full_cmd = docker_base + self.cmd
-                proc = subprocess.run(
-                    full_cmd,
-                    input=script.encode("utf-8"),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=self.timeout
-                )
+                in_args = self.cmd
+                stdin = script.encode("utf-8")
 
-            stdout = proc.stdout.decode("utf-8", errors="replace")
-            stderr = proc.stderr.decode("utf-8", errors="replace")
+        full_cmd = docker_args + in_args
 
-            result.update({
-                "status":  200 if proc.returncode == 0 else 500,
-                "stdout":  stdout,
-                "stderr":  stderr
-            })
+        # ─── Run and capture ───────────────────────────────────────────────────
+        try:
+            proc = subprocess.run(
+                full_cmd,
+                **({"input": stdin} if stdin else {}),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=self.timeout
+            )
+            out = proc.stdout.decode("utf-8", errors="replace")
+            err = proc.stderr.decode("utf-8", errors="replace")
+
+            if proc.returncode != 0:
+                err = err or f"{self.lang} exited with code {proc.returncode}"
+                return {**result, **{"status": 500, "error": err, "returncode": proc.returncode}}
+
+            return {**result, **{"status": 200, "stdout": out, "stderr": err}}
 
         except subprocess.TimeoutExpired:
-            result.update({
-                "status": 504,
-                "error":  f"{self.lang} execution timed out after {self.timeout}s."
-            })
+            return {**result, **{"status": 504, "error": f"{self.lang} timed out after {self.timeout}s"}}
         except Exception as exc:
             traceback.print_exc()
-            result.update({
-                "status": 500,
-                "error":  f"Unexpected error: {exc}"
-            })
+            return {**result, **{"status": 500, "error": f"Unexpected error: {exc}"}}
 
-        return result
-
-# --- Specializations ---
+# --- subclasses ---
 
 class MaximaAgent(ProgrammaticAgent):
-    def __init__(self):
-        # e.g. MAXIMA_IMAGE and MAXIMA_CMD in env
-        super().__init__("MAXIMA")
+    def __init__(self): super().__init__("MAXIMA")
 
 class RAgent(ProgrammaticAgent):
-    def __init__(self):
-        super().__init__("R")
+    def __init__(self): super().__init__("R")
 
 class PythonAgent(ProgrammaticAgent):
-    def __init__(self):
-        super().__init__("PYTHON")
+    def __init__(self): super().__init__("PYTHON")
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8000"))
-    agent_type = os.getenv("AGENT_TYPE", "MAXIMA").upper()
-    if agent_type == "R":
-        handler = RAgent()
-    elif agent_type == "PYTHON":
-        handler = PythonAgent()
-    else:
-        handler = MaximaAgent()
-
+    port     = int(os.getenv("PORT","8000"))
+    typ      = os.getenv("AGENT_TYPE","MAXIMA").upper()
+    handler  = {"R":RAgent,"PYTHON":PythonAgent}.get(typ, MaximaAgent)()
     run_server(port=port, handler_instance=handler)
 
