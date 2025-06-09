@@ -13,7 +13,4 @@ RUN apt-get update && \
 
 # Switch to the unprivileged user and set working directory
 USER agentuser
-WORKDIR /home/agentuser /home/agentuser
-
-# No ENTRYPOINT or CMD—generic agent will invoke:
-#   docker run --rm ... maxima --very-quiet --batch-string "<script>"
+WORKDIR /home/agentuser
