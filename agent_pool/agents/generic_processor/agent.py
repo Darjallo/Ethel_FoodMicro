@@ -18,7 +18,6 @@
 #
 import os
 import subprocess
-import time
 import traceback
 import base64
 from datetime import datetime
@@ -29,14 +28,15 @@ class ProgrammaticAgent:
     """
     Base class for “script→container” agents.
     Expects these env vars:
-      * <LANG>_IMAGE      e.g. MAXIMA_IMAGE="myregistry/maxima-safe:latest"
-      * <LANG>_CMD        e.g. MAXIMA_CMD="maxima --batch-string"
+      * <LANG>_IMAGE      e.g. MAXIMA_IMAGE="your-maxima-image"
+      * <LANG>_CMD        e.g. MAXIMA_CMD="maxima --very-quiet --batch-string"
       * TIMEOUT           per-job timeout in seconds (default 15)
     """
     def __init__(self, lang: str):
         self.lang = lang.upper()
         self.image = os.environ[f"{self.lang}_IMAGE"]
-        self.cmd    = os.environ[f"{self.lang}_CMD"].split()  # list form
+        # command split into list, e.g. ["python", "-I", "-c"]
+        self.cmd = os.environ[f"{self.lang}_CMD"].split()
         self.timeout = int(os.getenv("TIMEOUT", "15"))
 
     def handle(self, request_json: Dict[str, Any]) -> Dict[str, Any]:
@@ -48,39 +48,56 @@ class ProgrammaticAgent:
 
         script = request_json.get("script")
         if not isinstance(script, str):
-            result.update({"status": 400,
-                           "error": "Missing or invalid 'script' field (must be string)."})
+            result.update({
+                "status": 400,
+                "error": "Missing or invalid 'script' field (must be a string)."
+            })
             return result
 
+        # Base docker invocation flags
+        docker_base = [
+            "docker", "run", "--rm",
+            "--net=none",                  # no network
+            "--read-only",                 # rootfs read-only
+            "--tmpfs", "/tmp:rw,size=64m", # only /tmp writable
+            "--user", "1000:1000",         # unprivileged user
+            "--cap-drop=ALL",              # drop all capabilities
+            "--security-opt", "no-new-privileges",
+            "--memory=256m",               # resource limits
+            "--cpus=0.5",
+            self.image
+        ]
+
         try:
-            # launch ephemeral container, feed script on stdin
-            proc = subprocess.run(
-                ["docker", "run", "--rm",
-                "--net=none",                    # no network
-                "--read-only",                   # make rootfs read-only
-                "--tmpfs", "/tmp:rw,size=64m",   # allow only /tmp to be writable
-                "--user", "1000:1000",           # run as non-root (match agentuser’s uid/gid)
-                "--cap-drop=ALL",                # drop all Linux capabilities
-                "--security-opt", "no-new-privileges",
-                "--memory=256m",                 # resource limits
-                "--cpus=0.5",
-                 self.image] + self.cmd,
-                input=script.encode("utf-8"),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=self.timeout
-            )
+            # Determine if script must be passed as CLI argument
+            cli_flags = {"-c", "-e", "--batch-string"}
+            passes_via_arg = any(flag in self.cmd for flag in cli_flags)
+
+            if passes_via_arg:
+                # e.g. python -I -c "print(6*7)"
+                full_cmd = docker_base + self.cmd + [script]
+                proc = subprocess.run(
+                    full_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=self.timeout
+                )
+            else:
+                # fallback: interpreter reads from stdin
+                full_cmd = docker_base + self.cmd
+                proc = subprocess.run(
+                    full_cmd,
+                    input=script.encode("utf-8"),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=self.timeout
+                )
 
             stdout = proc.stdout.decode("utf-8", errors="replace")
             stderr = proc.stderr.decode("utf-8", errors="replace")
 
-            # if you expect binary output (e.g. R plots), you could:
-            #   img_b64 = base64.b64encode(proc.stdout).decode()
-            #   result["image_base64"] = img_b64
-            #   and omit capturing stdout as text.
-
             result.update({
-                "status":  proc.returncode == 0 and 200 or 500,
+                "status":  200 if proc.returncode == 0 else 500,
                 "stdout":  stdout,
                 "stderr":  stderr
             })
@@ -103,38 +120,26 @@ class ProgrammaticAgent:
 
 class MaximaAgent(ProgrammaticAgent):
     def __init__(self):
-        # assumes you set:
-        #   MAXIMA_IMAGE="your-maxima-image"
-        #   MAXIMA_CMD="maxima --very-quiet --batch-string"
+        # e.g. MAXIMA_IMAGE and MAXIMA_CMD in env
         super().__init__("MAXIMA")
 
 class RAgent(ProgrammaticAgent):
     def __init__(self):
-        # assumes:
-        #   R_IMAGE="your-r-image"
-        #   R_CMD="Rscript -e"
         super().__init__("R")
 
 class PythonAgent(ProgrammaticAgent):
     def __init__(self):
-        # assumes:
-        #   PYTHON_IMAGE="your-python-image"
-        #   PYTHON_CMD="python -I -c"
         super().__init__("PYTHON")
-
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
-    # register whichever agent you want on this server:
-    # e.g. run_server(..., handler_instance=MaximaAgent())
-    # or RAgent(), or PythonAgent()
-    handler = os.getenv("AGENT_TYPE", "MAXIMA").upper()
-    if handler == "R":
-        agent = RAgent()
-    elif handler == "PYTHON":
-        agent = PythonAgent()
+    agent_type = os.getenv("AGENT_TYPE", "MAXIMA").upper()
+    if agent_type == "R":
+        handler = RAgent()
+    elif agent_type == "PYTHON":
+        handler = PythonAgent()
     else:
-        agent = MaximaAgent()
+        handler = MaximaAgent()
 
-    run_server(port=port, handler_instance=agent)
+    run_server(port=port, handler_instance=handler)
 
