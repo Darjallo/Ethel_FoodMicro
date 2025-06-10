@@ -17,43 +17,85 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # async_agent_handler.py
-#
-import json
-from flow_resume import mark_task_done  # your helper that flips run -> resumed
+"""
+Handle callbacks from humans or other async agents.  The callback payload
+contains a run_id; we load the frozen run from Mongo, inject the async result,
+and resume the flow immediately in a background thread—no polling loop
+required.
+"""
+import json, threading, importlib, traceback
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler
+from pymongo import MongoClient
+import os
 
-def handle_async_agent(req):
-    """
-    Expected JSON:
-      {
-        "task_id": "...",
-        "run_id":  "...",
-        "result":  {...}       # arbitrary payload from human/async agent
-      }
-    """
+
+# --- DB setup ----------------------------------------------------
+mongo = MongoClient(os.getenv("MONGO_URI", "mongodb://mongodb:27017"))
+db    = mongo[os.getenv("MONGO_DB",  "ethel_files")]
+runs  = db.flow_runs        # same collection used by flow_resume.save_run()
+
+
+# --- main entry --------------------------------------------------
+def handle_async_agent(req: BaseHTTPRequestHandler):
+
     try:
-        length = int(req.headers.get("Content-Length", 0))
-        body   = req.rfile.read(length)
-        data   = json.loads(body)
+        data = json.loads(req.rfile.read(int(req.headers.get("Content-Length", 0))))
+        run_id  = data["run_id"]
+        result  = data.get("result", {})
     except Exception:
-        return _error(req, 400, {"error": "Invalid JSON"})
+        return _error(req, 400, {"error": "Invalid JSON or missing run_id"})
 
-    # TODO: validation
-    task_id = data.get("task_id")
-    run_id  = data.get("run_id")
-    result  = data.get("result", {})
+    # Atomically fetch & mark as running
+    run_doc = runs.find_one_and_update(
+        {"_id": run_id, "status": "waiting_async"},
+        {"$set": {"status": "running", "async_result": result,
+                  "updated": datetime.utcnow()}}
+    )
+    if not run_doc:
+        return _error(req, 404, {"error": f"run_id '{run_id}' not found or already resumed"})
 
-    # write result & resume the flow run
-    mark_task_done(task_id, run_id, result)
+    # Resume in background so we can 200-OK immediately
+    threading.Thread(target=_resume_run, args=(run_doc,), daemon=True).start()
 
+    _ok(req, {"status": "accepted", "run_id": run_id})
+
+
+# --- resume helper ----------------------------------------------
+def _resume_run(run_doc: dict):
+    try:
+        mod   = importlib.import_module(f"flows.{run_doc['flow']}")
+        state = run_doc["state"]
+        # Inject the async_result so downstream nodes can read it
+        state["async_result"] = run_doc.get("async_result")
+
+        next_node = run_doc["next_node"]
+        if not hasattr(mod, "resume"):
+            raise RuntimeError(f"Flow {run_doc['flow']} lacks a resume(state,next_node) helper")
+
+        # Invoke the flow from the saved node
+        mod.resume(state, next_node)
+
+        runs.update_one({"_id": run_doc["_id"]},
+                        {"$set": {"status": "done", "updated": datetime.utcnow()}})
+    except Exception as exc:
+        traceback.print_exc()
+        runs.update_one({"_id": run_doc["_id"]},
+                        {"$set": {"status": "error", "error": str(exc)}})
+
+
+# --- small helpers -----------------------------------------------
+def _ok(req, payload):
+    body = json.dumps(payload).encode()
     req.send_response(200)
     req.send_header("Content-Type", "application/json")
-    body = json.dumps({"status":"accepted"}).encode("utf-8")
     req.send_header("Content-Length", str(len(body)))
     req.end_headers()
     req.wfile.write(body)
 
+
 def _error(req, code, payload):
-    body = json.dumps(payload).encode("utf-8")
+    body = json.dumps(payload).encode()
     req.send_response(code)
     req.send_header("Content-Type", "application/json")
     req.send_header("Content-Length", str(len(body)))
