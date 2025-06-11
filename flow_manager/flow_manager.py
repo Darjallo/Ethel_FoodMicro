@@ -17,39 +17,34 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # flow_manager.py
-#
-import os, re, ssl, json, sys, traceback, importlib, uuid, threading
+import os, re, ssl, json, sys, traceback, importlib, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from asset_handler        import handle_upload, handle_get_files
-from async_agent_handler  import handle_async_agent
-from flow_resume          import save_run
+from asset_handler       import handle_upload, handle_get_files
+from async_agent_handler import handle_async_agent
 
-SSL_PORT = int(os.getenv("SSL_PORT", "8000"))
-SSL_CERT = os.getenv("SSL_CERT_PATH")
-SSL_KEY  = os.getenv("SSL_KEY_PATH")
+SSL_PORT  = int(os.getenv("SSL_PORT", "8000"))
+SSL_CERT  = os.getenv("SSL_CERT_PATH")
+SSL_KEY   = os.getenv("SSL_KEY_PATH")
 
 
+# ════════════════════════════════════════════════════════════════
 class FlowManagerRequestHandler(BaseHTTPRequestHandler):
 
-    # ───────────────────────── GET ──────────────────────────
+    # ------------------------------ GET -------------------------
     def do_GET(self):
         if self.path.startswith("/files"):
             return handle_get_files(self)
         self.send_response(404); self.end_headers()
 
-    # ───────────────────────── POST ─────────────────────────
+    # ------------------------------ POST ------------------------
     def do_POST(self):
-
-        # 1) /upload  (assets)
         if self.path == "/upload":
             return handle_upload(self)
-
-        # 2) /async_agent  (human/async callback)
         if self.path == "/async_agent":
             return handle_async_agent(self)
 
-        # 3) /  flow invocation -------------
+        # Flow invocation
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length)
         try:
@@ -61,11 +56,9 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         if not flow or not re.fullmatch(r"[A-Za-z0-9_]+", flow):
             return self._error(400, {"error": "Missing or invalid flow name"})
 
-        # Hot-reload?
         if req.get("flow_reload"):
             sys.modules.pop(f"flows.{flow}", None)
 
-        # import flow module
         try:
             mod = importlib.import_module(f"flows.{flow}")
         except ImportError as e:
@@ -80,7 +73,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self._error(500, {"error": "Internal server error"})
 
-    # ──────────────────── streaming -------------------------
+    # ---------------------- Helper: streaming -------------------
     def _handle_streaming(self, mod, req, flow_name):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -95,61 +88,56 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
             file_id=req.get("file_id"),
             stream=True,
         ):
-            # Pause requested?
+            # pause detected?
             if update.get("pause"):
-                save_run(
-                    run_id      = run_id,
-                    flow_name   = flow_name,
-                    state       = update["state"],
-                    next_node   = update["next_node"]
-                )
-                payload = {"info": "paused", "run_id": run_id}
-                self._send_chunk(json.dumps(payload).encode() + b"\n")
+                from flow_resume import save_run
+                save_run(run_id, flow_name, update["state"], update["next_node"])
+                pause_payload = {k: v for k, v in update.items() if k != "state"}
+                pause_payload.update({"info": "paused", "run_id": run_id})
+                self._send_chunk(json.dumps(pause_payload).encode() + b"\n")
                 self._send_chunk(b"", end=True)
                 return
 
-            # normal update
             self._send_chunk(json.dumps(update).encode() + b"\n")
 
         self._send_chunk(b"", end=True)
 
-    # ─────────────────── non-stream -------------------------
+    # --------------------- Helper: non-stream -------------------
     def _handle_non_stream(self, mod, req, flow_name):
-        run_id = str(uuid.uuid4())
-        gen = mod.run(
+        gen   = mod.run(
             context=req.get("context", {}),
             query=req.get("query", {}),
             file_id=req.get("file_id"),
             stream=False,
         )
-        first = next(gen, {})
+        first = next(gen, {})  # there is always at most one item in non-stream
 
-        # If paused return a small object
+        # paused?
         if first.get("pause"):
-            save_run(
-                run_id    = run_id,
-                flow_name = flow_name,
-                state     = first["state"],
-                next_node = first["next_node"]
-            )
-            body = json.dumps({"info":"paused","run_id":run_id}).encode()
+            from flow_resume import save_run
+            run_id = str(uuid.uuid4())
+            save_run(run_id, flow_name, first["state"], first["next_node"])
+            body_dict = {k: v for k, v in first.items() if k != "state"}
+            body_dict.update({"info": "paused", "run_id": run_id})
         else:
-            body = json.dumps(first).encode()
+            body_dict = first
 
+        body = json.dumps(body_dict).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    # ─────────────────── helpers ----------------------------
-    def _send_chunk(self, data: bytes, end: bool=False):
+    # ------------------ chunked-transfer helper -----------------
+    def _send_chunk(self, data: bytes, end: bool = False):
         if end:
             self.wfile.write(b"0\r\n\r\n")
         else:
             self.wfile.write(f"{len(data):X}\r\n".encode() + data + b"\r\n")
         self.wfile.flush()
 
+    # ---------------------------- error -------------------------
     def _error(self, code: int, payload: dict):
         body = json.dumps(payload).encode()
         self.send_response(code)
@@ -159,7 +147,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-# ───────────────────────── server --------------------------
+# ════════════════════════════════════════════════════════════════
 def run_server():
     server = ThreadingHTTPServer(("0.0.0.0", SSL_PORT), FlowManagerRequestHandler)
     if SSL_CERT and SSL_KEY:
