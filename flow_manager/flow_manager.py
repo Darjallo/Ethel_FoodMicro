@@ -19,7 +19,7 @@
 # flow_manager.py
 import os, re, ssl, json, sys, traceback, importlib, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
+from flow_resume import runs
 from asset_handler       import handle_upload, handle_get_files
 from async_agent_handler import handle_async_agent
 
@@ -32,10 +32,27 @@ SSL_KEY   = os.getenv("SSL_KEY_PATH")
 class FlowManagerRequestHandler(BaseHTTPRequestHandler):
 
     # ------------------------------ GET -------------------------
+
     def do_GET(self):
         if self.path.startswith("/files"):
             return handle_get_files(self)
-        self.send_response(404); self.end_headers()
+
+        if self.path.startswith("/run/"):
+            run_id = self.path.split("/run/")[1]
+            doc = runs.find_one({"_id": run_id}, projection={"state": False})  # hide bulky state
+            if doc:
+                body = json.dumps(doc, default=str).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self._error(404, {"error": "run not found"})
+            return
+
+        self.send_response(404)
+        self.end_headers()
 
     # ------------------------------ POST ------------------------
     def do_POST(self):

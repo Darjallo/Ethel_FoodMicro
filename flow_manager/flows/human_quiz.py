@@ -98,10 +98,16 @@ def run(context=None, query=None, file_id=None, stream=False) -> Iterator[Dict[s
 
 
 # ─────────── Phase-2  (resume, grade) --------------------------------------------------------------
-# --- phase-2 resume --------------------------------------------------
-def resume(state: Dict[str, Any], next_node: str):
+
+def resume(state: Dict[str, Any], next_node: str) -> Dict[str, Any]:
+    """
+    Mini-graph that starts at “grade”, generates feedback, and returns
+    the final state.  The caller (async_agent_handler) will persist the
+    returned state so that `feedback` is stored in flow_runs.
+    """
     builder = StateGraph(QuizState)
 
+    # node: craft grading prompt
     def grade_prompt(st):
         q = st["question"]
         a = (st.get("async_result", {}) or {}).get("answer", "")
@@ -110,19 +116,26 @@ def resume(state: Dict[str, Any], next_node: str):
             f"Question: {q}\nAnswer: {a}\n\n"
             "Give concise feedback and specify if it is correct."
         )
-        yield {"messages":[{"role":"user","content":prompt}]}
+        yield {"messages": [{"role": "user", "content": prompt}]}
 
     builder.add_node("grade", grade_prompt)
-    builder.add_node("reason",
-        reasoning_completion_node(
-            input_key_map={"messages":"messages","stream":"stream"},
-            output_key="feedback"))
 
-    builder.add_edge(START, "grade")   # entrypoint
+    # node: call LLM for feedback
+    builder.add_node(
+        "reason",
+        reasoning_completion_node(
+            input_key_map={"messages": "messages", "stream": "stream"},
+            output_key="feedback",
+        ),
+    )
+
+    # linear wiring
+    builder.add_edge(START, "grade")
     builder.add_edge("grade", "reason")
     builder.add_edge("reason", END)
 
     app = builder.compile()
-    # START→grade so we can just invoke the graph
-    app.invoke(state)
+
+    # invoke returns the final state dict; return it to caller
+    return app.invoke(state)
 
