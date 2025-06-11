@@ -1,80 +1,40 @@
-# flow_manager/flows/calc_three_languages.py
+# flow_manager/flows/test_processors.py
+from typing import TypedDict, Dict, Any
+from langgraph.graph import StateGraph
+from .nodes import maxima_processor_node, python_processor_node, r_processor_node
+from .flow_helper import linear, run_flow
 
-from typing import TypedDict, Any, Dict, Iterator
-from langgraph.graph import StateGraph, START, END
-
-from .nodes import (
-    maxima_processor_node,
-    python_processor_node,
-    r_processor_node,
-)
 
 class CalcThreeState(TypedDict, total=False):
-    # (we ignore file_id/query here)
     stream: bool
     script: str
     maxima_results: Dict[str, Any]
     python_results: Dict[str, Any]
-    r_results:      Dict[str, Any]
+    r_results: Dict[str, Any]
 
-def run(context=None, query=None, file_id=None, stream=False) -> Iterator[Dict[str, Any]]:
-    """
-    1) set_maxima → process_maxima → state['maxima_results']
-    2) set_python → process_python → state['python_results']
-    3) set_r      → process_r      → state['r_results']
-    """
+
+def run(context=None, query=None, file_id=None, stream=False):
     state: CalcThreeState = {"stream": stream}
     builder = StateGraph(CalcThreeState)
 
-    # 1) Maxima
-    def set_maxima(state_dict: dict) -> Iterator[dict]:
-        yield {"script": "6*7;"}
-    builder.add_node("set_maxima", set_maxima)
-    builder.add_node(
-        "process_maxima",
-        maxima_processor_node(
-            input_key="script",
-            output_key="maxima_results"
-        )
-    )
+    # helpers that YIELD a dict (must be generator)
+    def set_maxima(_):  yield {"script": "6*7;"}
+    def set_python(_):  yield {"script": "print(6*7)"}
+    def set_r(_):       yield {"script": "print(6*7)"}
 
-    # 2) Python
-    def set_python(state_dict: dict) -> Iterator[dict]:
-        yield {"script": "print(6*7)"}
-    builder.add_node("set_python", set_python)
-    builder.add_node(
-        "process_python",
-        python_processor_node(
-            input_key="script",
-            output_key="python_results"
-        )
-    )
+    nodes = [
+        ("set_maxima",  set_maxima),
+        ("maxima",
+         maxima_processor_node(input_key="script", output_key="maxima_results")),
+        ("set_python",  set_python),
+        ("python",
+         python_processor_node(input_key="script", output_key="python_results")),
+        ("set_r",       set_r),
+        ("r",
+         r_processor_node(input_key="script", output_key="r_results")),
+    ]
 
-    # 3) R
-    def set_r(state_dict: dict) -> Iterator[dict]:
-        yield {"script": "print(6*7)"}
-    builder.add_node("set_r", set_r)
-    builder.add_node(
-        "process_r",
-        r_processor_node(
-            input_key="script",
-            output_key="r_results"
-        )
-    )
-
-    # wire up the sequence
-    builder.add_edge(START,            "set_maxima")
-    builder.add_edge("set_maxima",     "process_maxima")
-    builder.add_edge("process_maxima", "set_python")
-    builder.add_edge("set_python",     "process_python")
-    builder.add_edge("process_python", "set_r")
-    builder.add_edge("set_r",          "process_r")
-    builder.add_edge("process_r",      END)
-
+    linear(builder, nodes)
     app = builder.compile()
-
-    if stream:
-        yield from app.stream(state)
-    else:
-        yield app.invoke(state)
+    yield from run_flow(app, state, stream)
 

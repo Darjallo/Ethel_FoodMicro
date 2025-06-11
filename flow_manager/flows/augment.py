@@ -18,103 +18,76 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # flow_manager/flows/augment.py
+"""
+augment
+=======
+• Takes {"text": "...", "collection": "..."} in state["query"].
+• Embeds the single text with Ada-3.
+• Extracts the first embedding vector.
+• Queries similarity search in the chosen collection.
+"""
 
-from typing import TypedDict
-from langgraph.graph import StateGraph, START, END
-
-# import the (updated) two node‐adapters we need:
+from typing import TypedDict, List, Dict, Any
+from langgraph.graph import StateGraph
 from .nodes import emb_ada3large_node, emb_similarity_ada3large_node
+from .flow_helper import extract_query, linear, run_flow
 
 
+# ──────────── State schema ──────────────────────────────────
 class AugmentState(TypedDict, total=False):
-    # Inputs from the Flow Manager
     context: dict
-    query: dict       # expecting {"text": str, "collection": str}
+    query: Dict[str, Any]
     stream: bool
 
-    # Transient fields we'll build:
-    texts: list[str]       # one‐element list containing the single "text" to embed
+    # pulled from query
+    text: str
     collection: str
-    embedding: list[float]
 
-    # Intermediate + final outputs:
-    emb_ada3large_result: list[list[float]]         # a list of embedding‐vectors (batch output)
-    emb_similarity_ada3large_result: list[dict]     # final list of similarity hits
+    # intermediate
+    texts: List[str]
+    emb_ada3large_result: List[List[float]]
+    embedding: List[float]
+
+    # final
+    emb_similarity_ada3large_result: List[Dict[str, Any]]
 
 
+# ──────────── Flow entrypoint ───────────────────────────────
 def run(context=None, query=None, file_id=None, stream=False):
-    """
-    1) Pull “text” and “collection” out of state["query"].
-    2) Wrap “text” into a one‐element list ["text"] and call emb_ada3large_node.
-       That node now returns a list of vectors (one per input string).
-    3) Extract the single embedding (first element of that list) into state["embedding"].
-    4) Call emb_similarity_ada3large_node with {"vector": embedding, "collection": collection}.
-    """
-
-    state: AugmentState = {
-        "context": context,
-        "query": query or {},
-        "stream": stream,
-    }
-
+    state: AugmentState = {"context": context, "query": query or {}, "stream": stream}
     builder = StateGraph(AugmentState)
 
-    # ─── Node #1 ───
-    # Extract “text” and “collection” from state["query"], wrap text into a one‐element list.
-    def prep_node(state_dict: dict):
-        q = state_dict.get("query", {}) or {}
-        text = ""
-        coll = ""
-        if isinstance(q, dict):
-            text = q.get("text", "") or ""
-            coll = q.get("collection", "") or ""
-        # put "texts" as a list (even if empty string) so that emb_ada3large_node sees it as batch
-        yield {"texts": [text], "collection": coll}
+    # 1) pull "text" and "collection" out of query
+    pull_node = extract_query({"text": "text", "collection": "collection"})
 
-    # ─── Node #2 ───
-    # Call Azure Ada3 to embed the “texts” list.  Puts its result under “emb_ada3large_result”.
-    emb_node = emb_ada3large_node(
-        input_text_key="texts",                 # read state["texts"] (a list of strings)
-        output_key="emb_ada3large_result"       # write state["emb_ada3large_result"] (a list of vectors)
-    )
+    # 2) wrap text into single-element list → state["texts"]
+    def wrap(st): yield {"texts": [st.get("text", "")]}
 
-    # ─── Node #3 ───
-    # Extract the first (and only) vector from emb_ada3large_result → put into "embedding"
-    def unpack_vector(state_dict: dict):
-        batch_embeds = state_dict.get("emb_ada3large_result", [])
-        single_vec: list[float] = []
-        if isinstance(batch_embeds, list) and len(batch_embeds) > 0:
-            single_list = batch_embeds[0]
-            if isinstance(single_list, list):
-                single_vec = single_list
-        yield {"embedding": single_vec}
+    # 3) Ada-3 embedding → emb_ada3large_result
+    embed_node = emb_ada3large_node(
+        input_text_key="texts",
+        output_key="emb_ada3large_result")
 
-    # ─── Node #4 ───
-    # Call our emb_similarity_ada3large agent, passing {"vector": <embedding>, "collection": <collection>}
+    # 4) take the first embedding vector
+    def first_vec(st):
+        batch = st.get("emb_ada3large_result", [])
+        vec   = batch[0] if batch and isinstance(batch[0], list) else []
+        yield {"embedding": vec}
+
+    # 5) similarity search
     sim_node = emb_similarity_ada3large_node(
         input_key_map={"embedding": "vector", "collection": "collection"},
-        output_key="emb_similarity_ada3large_result"
-    )
+        output_key="emb_similarity_ada3large_result")
 
-    # ─── Wire everything up ───
-    builder.add_node("prep", prep_node)
-    builder.add_node("embed", emb_node)
-    builder.add_node("unpack", unpack_vector)
-    builder.add_node("similarity", sim_node)
-
-    builder.add_edge(START, "prep")
-    builder.add_edge("prep", "embed")
-    builder.add_edge("embed", "unpack")
-    builder.add_edge("unpack", "similarity")
-    builder.add_edge("similarity", END)
+    # linear chain
+    linear(builder, [
+        ("pull", pull_node),
+        ("wrap", wrap),
+        ("embed", embed_node),
+        ("first", first_vec),
+        ("similarity", sim_node),
+    ])
 
     app = builder.compile()
-
-    if state.get("stream"):
-        iterator = app.stream(state)
-    else:
-        iterator = iter([app.invoke(state)])
-
-    for update in iterator:
-        yield update
+    yield from run_flow(app, state, stream)
 
