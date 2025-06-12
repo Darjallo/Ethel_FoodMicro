@@ -9,24 +9,24 @@ fi
 # Perform action based on the argument
 case $1 in
     up)
-        echo "Deploying stack..."
-        docker stack deploy -c docker-compose.yml ethelstack
+        echo "Deploying flow stack..."
+        docker stack deploy -c docker-compose.yml ethelflow
         ;;
     down)
-        echo "Removing stack..."
-        docker stack rm ethelstack
+        echo "Removing flow stack..."
+        docker stack rm ethelflow
         ;;
     ps)
-        echo "Listing services in the stack..."
-        docker stack ps ethelstack --no-trunc
+        echo "Listing services in the flow stack..."
+        docker stack ps ethelflow --no-trunc
         ;;
     flush)
         echo "Restarting everything..."
         systemctl restart docker
         ;;
     log)
-	echo "Log for ethelstack_$2"
-        docker service logs ethelstack_$2
+	echo "Log for ethelflow_$2"
+        docker service logs ethelflow_$2
 	;;
     *)
         echo "Invalid argument: $1"
