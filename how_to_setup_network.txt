@@ -1,0 +1,6 @@
+You need to have a Docker swarm manager running and set up the external network, so ethelflow and ethelapp can talk:
+
+sudo docker network create \
+  --driver overlay \
+  --attachable \
+  ethel_net

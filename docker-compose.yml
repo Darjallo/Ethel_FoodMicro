@@ -158,7 +158,7 @@ services:
 
 networks:
   ethel_net:
-    driver: overlay
+    external: true
 
 volumes:
   mongo_data:
