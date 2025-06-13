@@ -18,17 +18,9 @@ oci.pull(
 use_repo(oci, "distroless_base")
 
 bazel_dep(name = "rules_python", version = "1.4.1")
+bazel_dep(name = "rules_uv", version = "0.71.0")
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.toolchain(
-    python_version = "3.13",
+    python_version = "3.13.2",
 )
-
-pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
-pip.parse(
-    hub_name = "pypi",
-    python_version = "3.13",
-    requirements_lock = "//:requirements_lock.txt",
-)
-
-use_repo(pip, "pypi")

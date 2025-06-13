@@ -1,8 +1,14 @@
-# pip build with compile_pip_requirements
-load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+load("@rules_uv//uv:pip.bzl", "pip_compile")
+load("@rules_uv//uv:venv.bzl", "create_venv")
 
-compile_pip_requirements(
+pip_compile(
     name = "requirements",
     requirements_in = "requirements.txt",
+    requirements_txt = "requirements_lock.txt",
+)
+
+create_venv(
+    name = "venv",
+    destination_folder = ".venv",
     requirements_txt = "requirements_lock.txt",
 )
