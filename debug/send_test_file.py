@@ -10,9 +10,11 @@ from urllib.parse import urljoin
 # Suppress the InsecureRequestWarning if you're using a self-signed cert
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+TENANT = "ethz"
+
 def main():
     p = argparse.ArgumentParser(
-        description="Upload a file to the Flow Manager /upload endpoint, then invoke the 'emb_file' flow (streaming)."
+        description="Upload a file (tenant='ethz') to the Flow Manager /upload endpoint, then invoke the 'emb_file' flow (streaming)."
     )
     p.add_argument("file", help="Local path to the file to upload")
     p.add_argument(
@@ -49,10 +51,11 @@ def main():
             "file": (os.path.basename(args.file), f)
         }
         data = {
+            "tenant":     TENANT,
             "collection": args.collection,
-            "path":      remote_path
+            "path":       remote_path
         }
-        print(f"Uploading '{args.file}' → collection='{args.collection}', path='{remote_path}' …")
+        print(f"Uploading '{args.file}' → tenant='{TENANT}', collection='{args.collection}', path='{remote_path}' …")
         try:
             resp = requests.post(
                 args.url,
@@ -76,22 +79,26 @@ def main():
     # 2) Invoke the 'emb_file' flow (streaming)
     # Determine the base Flow Manager URL (remove "/upload" suffix if present)
     if args.url.endswith("/upload"):
-        base_url = args.url[: -len("/upload")]
+        base_url = args.url[:-len("/upload")]
     else:
         base_url = args.url.rsplit("/", 1)[0]
 
     flow_url = urljoin(base_url + "/", "")  # ensures trailing slash
-    print(f"\nInvoking 'emb_file' flow at {flow_url} …\n")
+    # Prefix tenant to file_id
+    file_id = f"{TENANT}/{args.collection}/{remote_path}"
+
+    print(f"\nInvoking 'emb_file' flow at {flow_url} with file_id='{file_id}' …\n")
 
     flow_payload = {
-        "flow":          "emb_file",
-        "file_id":       f"{args.collection}/{remote_path}",
-        "stream":        True,
-        "flow_reload":   True
+        "tenant":     TENANT,
+        "flow":       "emb_file",
+        "file_id":    file_id,
+        "stream":     True,
+        "flow_reload": True
     }
 
     try:
-        # Note: stream=True here so we can iterate over lines as they arrive
+        # Note: stream=True so we can iterate over lines as they arrive
         flow_resp = requests.post(
             flow_url,
             json=flow_payload,
@@ -115,15 +122,14 @@ def main():
             parsed = json.loads(line)
             print(f"=== Update #{update_count} ===")
             print(json.dumps(parsed, indent=2))
-            print()  # blank line between updates
+            print()
         except ValueError:
             # If a line is not valid JSON, just print it raw
             print(f"=== Update #{update_count} (non-JSON) ===")
             print(line)
             print()
 
-    # 4) After streaming finishes, check if there was any closing JSON (in some setups)
-    #    Some servers may send a final JSON as part of the last line.
+    # 4) After streaming finishes, report total updates
     print(f"Stream ended after {update_count} update(s).")
 
 if __name__ == "__main__":

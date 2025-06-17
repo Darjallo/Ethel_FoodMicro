@@ -1,0 +1,9 @@
+If you need to clear GridFS for debugging:
+
+sudo docker run --rm \
+  --network ethel_net \
+  mongo:4.4 mongo \
+    mongodb:27017/ethel_files \
+    --eval "db.fs.files.drop(); db.fs.chunks.drop(); print('GridFS cleared');"
+
+Careful, this actually *does* clear all the stuff in there.

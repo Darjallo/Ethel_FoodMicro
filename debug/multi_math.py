@@ -24,6 +24,7 @@ def call_flow(expression: str, stream: bool, reload_code: bool = False):
         "flow":        "multi_math_check",
         "query":       {"expression": expression},
         "stream":      stream,
+        "tenant":      "ethz",
         "flow_reload": reload_code,
     }
     resp = requests.post(

@@ -16,30 +16,27 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# flow_manager.py
+# flow_manager.py (tenant-aware)
 import os, re, ssl, json, sys, traceback, importlib, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from flow_resume import runs
-from asset_handler       import handle_upload, handle_get_files
+from asset_handler import handle_upload, handle_get_files
 from async_agent_handler import handle_async_agent
 
-SSL_PORT  = int(os.getenv("SSL_PORT", "8000"))
-SSL_CERT  = os.getenv("SSL_CERT_PATH")
-SSL_KEY   = os.getenv("SSL_KEY_PATH")
+SSL_PORT = int(os.getenv("SSL_PORT", "8000"))
+SSL_CERT = os.getenv("SSL_CERT_PATH")
+SSL_KEY  = os.getenv("SSL_KEY_PATH")
 
 
-# ════════════════════════════════════════════════════════════════
 class FlowManagerRequestHandler(BaseHTTPRequestHandler):
-
-    # ------------------------------ GET -------------------------
-
+    # ─── GET ────────────────────────────────────────────────────────
     def do_GET(self):
         if self.path.startswith("/files"):
             return handle_get_files(self)
 
         if self.path.startswith("/run/"):
             run_id = self.path.split("/run/")[1]
-            doc = runs.find_one({"_id": run_id}, projection={"state": False})  # hide bulky state
+            doc = runs.find_one({"_id": run_id}, projection={"state": False})
             if doc:
                 body = json.dumps(doc, default=str).encode()
                 self.send_response(200)
@@ -54,20 +51,27 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
-    # ------------------------------ POST ------------------------
+    # ─── POST ───────────────────────────────────────────────────────
     def do_POST(self):
         if self.path == "/upload":
             return handle_upload(self)
         if self.path == "/async_agent":
             return handle_async_agent(self)
 
-        # Flow invocation
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length)
         try:
             req = json.loads(body)
         except json.JSONDecodeError:
             return self._error(400, {"error": "Invalid JSON"})
+
+        # ── tenant must be provided in every flow request ─────────
+        tenant = req.get("tenant")
+        if not tenant or not isinstance(tenant, str):
+            return self._error(400, {"error": "Missing or invalid tenant"})
+        # merge tenant into the flow context
+        context = req.get("context", {}) or {}
+        context["tenant"] = tenant
 
         flow = req.get("flow")
         if not flow or not re.fullmatch(r"[A-Za-z0-9_]+", flow):
@@ -83,29 +87,22 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
 
         try:
             if req.get("stream"):
-                self._handle_streaming(mod, req, flow)
+                self._handle_streaming(mod, context, req.get("query", {}), req.get("file_id"), flow)
             else:
-                self._handle_non_stream(mod, req, flow)
+                self._handle_non_stream(mod, context, req.get("query", {}), req.get("file_id"), flow)
         except Exception:
             traceback.print_exc()
             self._error(500, {"error": "Internal server error"})
 
-    # ---------------------- Helper: streaming -------------------
-    def _handle_streaming(self, mod, req, flow_name):
+    # ─── Helpers ────────────────────────────────────────────────────
+    def _handle_streaming(self, mod, context, query, file_id, flow_name):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
 
         run_id = str(uuid.uuid4())
-
-        for update in mod.run(
-            context=req.get("context", {}),
-            query=req.get("query", {}),
-            file_id=req.get("file_id"),
-            stream=True,
-        ):
-            # pause detected?
+        for update in mod.run(context=context, query=query, file_id=file_id, stream=True):
             if update.get("pause"):
                 from flow_resume import save_run
                 save_run(run_id, flow_name, update["state"], update["next_node"])
@@ -119,17 +116,10 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
 
         self._send_chunk(b"", end=True)
 
-    # --------------------- Helper: non-stream -------------------
-    def _handle_non_stream(self, mod, req, flow_name):
-        gen   = mod.run(
-            context=req.get("context", {}),
-            query=req.get("query", {}),
-            file_id=req.get("file_id"),
-            stream=False,
-        )
-        first = next(gen, {})  # there is always at most one item in non-stream
+    def _handle_non_stream(self, mod, context, query, file_id, flow_name):
+        gen   = mod.run(context=context, query=query, file_id=file_id, stream=False)
+        first = next(gen, {})
 
-        # paused?
         if first.get("pause"):
             from flow_resume import save_run
             run_id = str(uuid.uuid4())
@@ -146,7 +136,6 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    # ------------------ chunked-transfer helper -----------------
     def _send_chunk(self, data: bytes, end: bool = False):
         if end:
             self.wfile.write(b"0\r\n\r\n")
@@ -154,7 +143,6 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"{len(data):X}\r\n".encode() + data + b"\r\n")
         self.wfile.flush()
 
-    # ---------------------------- error -------------------------
     def _error(self, code: int, payload: dict):
         body = json.dumps(payload).encode()
         self.send_response(code)
@@ -164,7 +152,6 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-# ════════════════════════════════════════════════════════════════
 def run_server():
     server = ThreadingHTTPServer(("0.0.0.0", SSL_PORT), FlowManagerRequestHandler)
     if SSL_CERT and SSL_KEY:

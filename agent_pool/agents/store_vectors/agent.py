@@ -85,12 +85,12 @@ class StoreVectorsAgent:
             })
             return response
 
-        # 2) Split file_id into collection_name and file_path
-        collection_name, file_path = file_id.split("/", 1)
+        # 2) Split file_id into tenant, collection_name and file_path
+        tenant,collection_name, file_path = file_id.split("/", 2)
 
         # 3) Open (or create) the Chroma “default” collection via open_chroma_for(...)
         chroma_result: Optional[Tuple[PersistentClient, Any]] = open_chroma_for(
-            collection_name, emb_method="ada3large"
+            tenant,collection_name, emb_method="ada3large"
         )
         if chroma_result is None:
             response.update({

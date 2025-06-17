@@ -18,6 +18,8 @@
 #
 # flow_manager/flows/emb_file.py
 #
+# flow_manager/flows/emb_file.py
+#
 from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph
 from .nodes import (
@@ -30,6 +32,7 @@ from .flow_helper import linear, run_flow
 
 
 class EmbFileState(TypedDict, total=False):
+    tenant: str
     file_id: str
     stream: bool
     text: str
@@ -39,32 +42,69 @@ class EmbFileState(TypedDict, total=False):
 
 
 def run(context=None, query=None, file_id=None, stream=False):
-    state: EmbFileState = {"file_id": file_id, "stream": stream}
+    # 1) extract tenant from the incoming context
+    tenant = context.get("tenant")
+    if not tenant:
+        raise ValueError("Missing tenant in context")
+
+    # 2) initialize state with tenant + file_id + stream flag
+    state: EmbFileState = {
+        "tenant": tenant,
+        "file_id": file_id,
+        "stream": stream
+    }
     builder = StateGraph(EmbFileState)
 
-    # helper to peel plain text out of full ft-agent response
+    # helper to peel plain text out of full file_to_text response
     def extract_text(st):
         full = st.get("text", {})
         plain = full.get("text", "") if isinstance(full, dict) else ""
         yield {"text": plain}
 
     nodes = [
-        ("file_to_text",
-         file_to_text_node(
-             input_key_map={"file_id": "file_id"},
-             output_key="text")),
+        # file_to_text now knows both tenant and file_id
+        (
+            "file_to_text",
+            file_to_text_node(
+                input_key_map={
+                    "tenant": "tenant",
+                    "file_id": "file_id"
+                },
+                output_key="text"
+            )
+        ),
         ("extract_text", extract_text),
-        ("chunk",
-         chunk_text_node(input_text_key="text", output_key="texts")),
-        ("embed",
-         emb_ada3large_node(input_text_key="texts", output_key="embeddings")),
-        ("store",
-         store_vectors_node(
-             input_key_map={"file_id":"file_id","texts":"texts","embeddings":"embeddings"},
-             output_key="store_vectors_result")),
+        (
+            "chunk",
+            chunk_text_node(
+                input_text_key="text",
+                output_key="texts"
+            )
+        ),
+        (
+            "embed",
+            emb_ada3large_node(
+                input_text_key="texts",
+                output_key="embeddings"
+            )
+        ),
+        # store_vectors also needs tenant so it writes under the right namespace
+        (
+            "store",
+            store_vectors_node(
+                input_key_map={
+                    "tenant":     "tenant",
+                    "file_id":    "file_id",
+                    "texts":      "texts",
+                    "embeddings": "embeddings"
+                },
+                output_key="store_vectors_result"
+            )
+        ),
     ]
 
-    linear(builder, nodes)        # wires START→…→END
+    # wire them up and run
+    linear(builder, nodes)
     app = builder.compile()
     yield from run_flow(app, state, stream)
 

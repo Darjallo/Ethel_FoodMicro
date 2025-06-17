@@ -15,46 +15,38 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# asset_handler.py
-
-import os
-import re
-import json
-import ssl
-import mimetypes
-import traceback
-
+# asset_handler.py (tenant-aware)
+import os, re, json, traceback
 from urllib.parse import unquote
 from http import HTTPStatus
 from pymongo import MongoClient
 import gridfs
 
-# Mongo settings (override via env)
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017")
 MONGO_DB  = os.getenv("MONGO_DB", "ethel_files")
 
-# init Mongo + GridFS
-_mongo_client = MongoClient(MONGO_URI)
-_mongo_db     = _mongo_client[MONGO_DB]
-_fs           = gridfs.GridFS(_mongo_db)
+_client = MongoClient(MONGO_URI)
+_db     = _client[MONGO_DB]
+_fs     = gridfs.GridFS(_db)
 
 
 def handle_upload(handler):
     try:
         ctype = handler.headers.get_content_type()
         if not ctype.startswith("multipart/form-data"):
-            return _error(handler, HTTPStatus.BAD_REQUEST, {"error": "Expected multipart/form-data"})
+            return _error(handler, HTTPStatus.BAD_REQUEST,
+                          {"error": "Expected multipart/form-data"})
 
-        fs = handler.rfile
-        pdict = {"boundary": handler.headers.get_boundary().encode("utf-8")}
-        length = int(handler.headers.get("Content-Length", 0))
-        raw = fs.read(length)
+        boundary = handler.headers.get_boundary().encode("utf-8")
+        length   = int(handler.headers.get("Content-Length", 0))
+        raw      = handler.rfile.read(length)
+        parts    = raw.split(b"--" + boundary)
 
-        parts = raw.split(b"--" + pdict["boundary"])
-        file_bytes = None
-        collection = None
-        file_path  = None
-        filename   = None
+        tenant      = None
+        collection  = None
+        file_path   = None
+        filename    = None
+        file_bytes  = None
 
         for part in parts:
             if b'Content-Disposition' not in part:
@@ -62,21 +54,25 @@ def handle_upload(handler):
             headers, body = part.split(b"\r\n\r\n", 1)
             body = body.rsplit(b"\r\n", 1)[0]
             disp = headers.decode()
-            if 'name="file"' in disp:
-                m = re.search(r'filename="([^"]+)"', disp)
-                filename = m.group(1)
-                file_bytes = body
+            if 'name="tenant"' in disp:
+                tenant = body.decode().strip()
             elif 'name="collection"' in disp:
                 collection = body.decode().strip()
             elif 'name="path"' in disp:
                 file_path = body.decode().strip()
+            elif 'name="file"' in disp:
+                m = re.search(r'filename="([^"]+)"', disp)
+                filename   = m.group(1)
+                file_bytes = body
 
-        if file_bytes is None or not collection or not file_path:
-            return _error(handler, HTTPStatus.BAD_REQUEST,
-                          {"error": "Fields 'file', 'collection', 'path' required"})
+        if not all([tenant, collection, file_path, file_bytes]):
+            return _error(handler, HTTPStatus.BAD_REQUEST, {
+                "error": "Fields 'tenant','collection','path','file' required"
+            })
 
-        # delete old versions
-        for doc in _mongo_db.fs.files.find({
+        # Delete any old versions for this tenant/collection/path
+        for doc in _db.fs.files.find({
+            "metadata.tenant":     tenant,
             "metadata.collection": collection,
             "metadata.path":       file_path
         }):
@@ -85,42 +81,54 @@ def handle_upload(handler):
         fid = _fs.put(
             file_bytes,
             filename=filename,
-            metadata={"collection": collection, "path": file_path}
+            metadata={
+                "tenant":     tenant,
+                "collection": collection,
+                "path":       file_path
+            }
         )
 
-        resp = {"file_id": str(fid)}
-        body = json.dumps(resp).encode("utf-8")
-        handler.send_response(200)
-        handler.send_header("Content-Type", "application/json")
-        handler.send_header("Content-Length", str(len(body)))
-        handler.end_headers()
-        handler.wfile.write(body)
+        return _json_response(handler, HTTPStatus.OK, {"file_id": str(fid)})
 
     except Exception:
         traceback.print_exc()
-        return _error(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Upload failed"})
+        return _error(handler, HTTPStatus.INTERNAL_SERVER_ERROR,
+                      {"error": "Upload failed"})
 
 
 def handle_get_files(handler):
-    # GET /files[/collection/...]
-    path = unquote(handler.path[len("/files"):]).lstrip("/")
+    # URL: GET /files[/<tenant>[/<collection>[/<path>]]]
+    path     = unquote(handler.path[len("/files"):]).lstrip("/")
     segments = [s for s in path.split("/") if s]
 
-    # if no segments → list collections
+    # 1) No segments → list tenants
     if not segments:
-        cols = _mongo_db.fs.files.distinct("metadata.collection")
+        tenants = _db.fs.files.distinct("metadata.tenant")
+        out = [{"type": "tenant", "name": t} for t in tenants]
+        return _json_response(handler, HTTPStatus.OK, out)
+
+    tenant = segments[0]
+
+    # 2) Only tenant → list collections in that tenant
+    if len(segments) == 1:
+        cols = _db.fs.files.distinct(
+            "metadata.collection",
+            {"metadata.tenant": tenant}
+        )
         out = [{"type": "collection", "name": c} for c in cols]
         return _json_response(handler, HTTPStatus.OK, out)
 
-    collection = segments[0]
-    subpath = "/".join(segments[1:])
+    collection = segments[1]
+    subpath    = "/".join(segments[2:]) if len(segments) > 2 else ""
 
-    # First: if subpath non-empty, try exact file lookup
+    # 3) If subpath present, try exact file download
     if subpath:
         try:
-            gf = _fs.get_last_version(
-                metadata={"collection": collection, "path": subpath}
-            )
+            gf = _fs.get_last_version(metadata={
+                "tenant":     tenant,
+                "collection": collection,
+                "path":       subpath
+            })
             data = gf.read()
             mime = mimetypes.guess_type(gf.filename)[0] or "application/octet-stream"
             handler.send_response(HTTPStatus.OK)
@@ -132,25 +140,24 @@ def handle_get_files(handler):
         except gridfs.NoFile:
             pass  # fall through to directory listing
 
-    # Otherwise: directory listing under this prefix
-    # gather all paths in this collection
-    docs = list(_mongo_db.fs.files.find({
+    # 4) Otherwise directory listing under this tenant+collection
+    query = {
+        "metadata.tenant":     tenant,
         "metadata.collection": collection
-    }))
+    }
+    docs = list(_db.fs.files.find(query))
     if not docs:
-        return _error(handler, HTTPStatus.NOT_FOUND, {"error": "Collection not found"})
+        return _error(handler, HTTPStatus.NOT_FOUND,
+                      {"error": "Collection not found"})
 
     all_paths = [d["metadata"]["path"] for d in docs]
-    listing = _make_listing(all_paths, subpath)
+    listing   = _make_listing(all_paths, subpath)
     return _json_response(handler, HTTPStatus.OK, listing)
 
 
 def _make_listing(all_paths, prefix):
-    """
-    Build a single‐level listing under `prefix` from full paths.
-    """
     seen = set()
-    out = []
+    out  = []
     for p in all_paths:
         if prefix:
             if not p.startswith(prefix + "/"):
@@ -165,7 +172,7 @@ def _make_listing(all_paths, prefix):
         if rest:
             out.append({"type": "directory", "name": first})
         else:
-            out.append({"type": "file", "name": first})
+            out.append({"type": "file",      "name": first})
     return out
 
 

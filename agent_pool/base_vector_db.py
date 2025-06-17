@@ -19,22 +19,16 @@
 # agent_pool/base_vector_db.py
 
 import os
-from typing import Optional, Tuple, Any, Dict
+from typing import Optional, Tuple, Any
 
 from chromadb import PersistentClient
-from chromadb.config import Settings
 
 
 def sharded_path(collection_name: str) -> str:
     """
-    Given a collection name, return a sharded directory path of the form:
+    Given a raw collection name (no tenant), return a sharded relative path:
         first_char/second_char/third_char/collection_name
-    If the name is shorter than 3 characters, pad with underscores (“_”).
-
-    Examples:
-      "foobar" -> "f/o/o/foobar"
-      "ba"     -> "b/a/_/ba"
-      ""       -> "_/_/_/"
+    Pads with “_” if shorter than 3 chars.
     """
     padded = (collection_name + "___")[:3]
     first, second, third = padded[0], padded[1], padded[2]
@@ -42,50 +36,53 @@ def sharded_path(collection_name: str) -> str:
 
 
 def open_chroma_for(
+    tenant: str,
     collection_name: str,
     emb_method: str
 ) -> Optional[Tuple[PersistentClient, Any]]:
     """
-    Open (or create) a Chroma “default” collection inside a sharded folder for `collection_name`.
-    - If the sharded folder/Chroma DB does not exist, mkdir it and create a new Chroma
-      collection named "default" with metadata {"emb_method": emb_method}.
-    - If it already exists:
-        • If an existing “default” collection’s metadata["emb_method"] == emb_method,
-          return (client, coll).
-        • Otherwise, return None (indicating a mismatch).
+    Open (or create) a Chroma “default” collection under:
+
+        CHROMA_BASE_DIR/
+           └── <tenant>/
+               └── <sharded_path(collection_name)>/
+                   └── (Chroma files)
+
+    Args:
+      tenant         – your tenant code, e.g. “ethz”
+      collection_name– your per-tenant collection, e.g. “course123”
+      emb_method     – like “ada3large”
 
     Returns:
-        (chroma_client, chroma_collection)  on success,
-        None                               if this folder already had a different emb_method.
+      (client, coll) on success, or None if an existing collection
+      exists under a different emb_method or on error.
     """
     base_dir = os.getenv("CHROMA_BASE_DIR", "/chroma_db")
-    folder = os.path.join(base_dir, sharded_path(collection_name))
+    # build the tenant-scoped shard folder
+    folder = os.path.join(base_dir, tenant, sharded_path(collection_name))
     os.makedirs(folder, exist_ok=True)
 
+    # init the Chroma client on that folder
     try:
         client = PersistentClient(path=folder)
     except Exception as e:
-        # Often a permissions/format problem
-        print(f"[DEBUG] Failed to create PersistentClient at {folder}: {e}", flush=True)
+        print(f"[DEBUG] Could not open PersistentClient at {folder}: {e}", flush=True)
         return None
 
-    # Try to open "default"
+    # try to get or create the “default” collection with matching emb_method
     try:
         coll = client.get_collection("default")
-        existing_method = coll.metadata.get("emb_method")
-        if existing_method == emb_method:
-            # exact match; use it
+        if coll.metadata.get("emb_method") == emb_method:
             return client, coll
         else:
-            # folder already has a collection under a different embedding method
             print(
-                f"[DEBUG] Metadata mismatch in {folder}: "
-                f"found emb_method={existing_method}, expected={emb_method}",
+                f"[DEBUG] Embedding‐method mismatch in {folder}: "
+                f"found {coll.metadata.get('emb_method')}, expected {emb_method}",
                 flush=True
             )
             return None
     except Exception:
-        # If get_collection("default") failed, it simply doesn’t exist yet → create it
+        # not found yet — create it
         try:
             coll = client.create_collection(
                 name="default",
@@ -93,34 +90,26 @@ def open_chroma_for(
             )
             return client, coll
         except Exception as e:
-            print(f"[DEBUG] Failed to create 'default' in {folder}: {e}", flush=True)
+            print(f"[DEBUG] Failed to create ‘default’ in {folder}: {e}", flush=True)
             return None
 
 
 def get_chroma_collection(
+    tenant: str,
     collection_name: str
 ) -> Optional[Any]:
     """
-    Attempt to open the Chroma “default” collection for this `collection_name` shard.
-    If no such folder/collection exists, return None.
-
-    Returns:
-       Collection  on success
-       None        if the folder or "default" is missing.
+    Open the existing Chroma “default” collection for (tenant, collection_name),
+    or return None if nothing exists or on error.
     """
     base_dir = os.getenv("CHROMA_BASE_DIR", "/chroma_db")
-    shard_folder = os.path.join(base_dir, sharded_path(collection_name))
+    folder   = os.path.join(base_dir, tenant, sharded_path(collection_name))
 
-    if not os.path.isdir(shard_folder):
-        # No shard folder means nothing was ever created for this collection.
+    if not os.path.isdir(folder):
         return None
 
     try:
-        client = PersistentClient(path=shard_folder)
-    except Exception:
-        return None
-
-    try:
+        client = PersistentClient(path=folder)
         return client.get_collection("default")
     except Exception:
         return None

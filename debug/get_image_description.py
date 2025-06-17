@@ -1,32 +1,43 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import os
 import sys
 import requests
 import urllib3
-from urllib.parse import urljoin
 
 # Suppress the InsecureRequestWarning if using self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+TENANT = "ethz"
+
 
 def invoke_flow(base_url: str, prompt: str, file_id: str, stream: bool):
     """
-    Helper to POST to / with flow="reasoning_test", capturing either a one-shot JSON or streaming JSON lines.
+    Helper to POST to / with tenant="ethz", flow="reasoning_test", capturing
+    either a one-shot JSON or streaming JSON lines.
     """
+    # prepend tenant to file_id
+    effective_file_id = f"{TENANT}/{file_id}"
+
     payload = {
+        "tenant": TENANT,                # tenant scope
         "flow": "reasoning_test",
         "query": {
             "prompt": prompt,
-            "file_id": file_id
+            "file_id": effective_file_id
         },
         "stream": stream,
         "flow_reload": False  # set True if you want to pick up code changes
     }
 
     try:
-        resp = requests.post(base_url, json=payload, verify=False, timeout=300, stream=stream)
+        resp = requests.post(
+            base_url,
+            json=payload,
+            verify=False,
+            timeout=300,
+            stream=stream
+        )
         resp.raise_for_status()
     except Exception as e:
         print(f"[ERROR] Flow invocation failed: {e}", file=sys.stderr)
@@ -57,7 +68,7 @@ def invoke_flow(base_url: str, prompt: str, file_id: str, stream: bool):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Invoke reasoning_test flow against a test image in MongoDB"
+        description=f"Invoke reasoning_test flow (tenant='{TENANT}') against a test file in GridFS"
     )
     parser.add_argument(
         "--url", "-u",
@@ -67,7 +78,7 @@ def main():
     parser.add_argument(
         "--file_id", "-f",
         default="test_collection/test_dir/timeres.gif",
-        help="The file_id already stored in GridFS to send to the reasoning model"
+        help="Path under GridFS (without tenant) to send to the reasoning model"
     )
     parser.add_argument(
         "--prompt", "-p",

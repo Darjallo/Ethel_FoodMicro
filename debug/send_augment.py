@@ -27,7 +27,8 @@ def main():
         "flow": "augment",
         "query": {
             "text": args.query,
-            "collection": "test_collection"
+            "collection": "test_collection",
+            "tenant" : "ethz"
         },
         "stream": False,
         "flow_reload": False
