@@ -16,7 +16,12 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # asset_handler.py (tenant-aware)
-import os, re, json, traceback
+#
+import os
+import re
+import json
+import traceback
+import mimetypes
 from urllib.parse import unquote
 from http import HTTPStatus
 from pymongo import MongoClient
@@ -71,7 +76,7 @@ def handle_upload(handler):
             })
 
         # Delete any old versions for this tenant/collection/path
-        for doc in _db.fs.files.find({
+        for doc in _db["fs.files"].find({
             "metadata.tenant":     tenant,
             "metadata.collection": collection,
             "metadata.path":       file_path
@@ -103,15 +108,15 @@ def handle_get_files(handler):
 
     # 1) No segments → list tenants
     if not segments:
-        tenants = _db.fs.files.distinct("metadata.tenant")
+        tenants = _db["fs.files"].distinct("metadata.tenant")
         out = [{"type": "tenant", "name": t} for t in tenants]
         return _json_response(handler, HTTPStatus.OK, out)
 
     tenant = segments[0]
 
-    # 2) Only tenant → list collections in that tenant
+    # 2) Only tenant → list collections
     if len(segments) == 1:
-        cols = _db.fs.files.distinct(
+        cols = _db["fs.files"].distinct(
             "metadata.collection",
             {"metadata.tenant": tenant}
         )
@@ -119,9 +124,9 @@ def handle_get_files(handler):
         return _json_response(handler, HTTPStatus.OK, out)
 
     collection = segments[1]
-    subpath    = "/".join(segments[2:]) if len(segments) > 2 else ""
+    subpath    = "/".join(segments[2:])  # could be file or dir
 
-    # 3) If subpath present, try exact file download
+    # 3) If subpath present → attempt file download
     if subpath:
         try:
             gf = _fs.get_last_version(metadata={
@@ -138,20 +143,24 @@ def handle_get_files(handler):
             handler.wfile.write(data)
             return
         except gridfs.NoFile:
-            pass  # fall through to directory listing
+            return _error(handler, HTTPStatus.NOT_FOUND,
+                          {"error": f"File not found: {tenant}/{collection}/{subpath}"})
+        except Exception:
+            traceback.print_exc()
+            return _error(handler, HTTPStatus.INTERNAL_SERVER_ERROR,
+                          {"error": "Error retrieving file"})
 
-    # 4) Otherwise directory listing under this tenant+collection
-    query = {
+    # 4) Directory listing under this tenant+collection
+    docs = list(_db["fs.files"].find({
         "metadata.tenant":     tenant,
         "metadata.collection": collection
-    }
-    docs = list(_db.fs.files.find(query))
+    }))
     if not docs:
         return _error(handler, HTTPStatus.NOT_FOUND,
                       {"error": "Collection not found"})
 
     all_paths = [d["metadata"]["path"] for d in docs]
-    listing   = _make_listing(all_paths, subpath)
+    listing   = _make_listing(all_paths, prefix="")
     return _json_response(handler, HTTPStatus.OK, listing)
 
 
