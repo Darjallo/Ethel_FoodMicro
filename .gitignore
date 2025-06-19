@@ -3,3 +3,4 @@
 .vscode
 .ansible
 bazel-*
+__pycache__
