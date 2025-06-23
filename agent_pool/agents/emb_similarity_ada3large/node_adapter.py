@@ -16,45 +16,39 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-#
 import requests
 from typing import Callable, Iterator, Dict, Any
 
 def emb_similarity_ada3large_node(
     *,
     input_key_map: Dict[str, str] = {
+        "tenant":     "tenant",     # NEW
         "collection": "collection",
-        "embedding":  "embedding",
-        # If you want to expose “k” in state, you can add: "k": "k"
+        "embedding":  "vector",
+        # Optionally expose "k": "k"
     },
     output_key: str = "emb_similarity_ada3large_result",
     url: str = "http://emb_similarity_ada3large:8000/",
 ) -> Callable[[Dict[str, Any]], Iterator[Dict[str, Any]]]:
     """
-    A node that:
-      1) Reads state["collection"] → payload["collection"],
-                 state["embedding"]  → payload["embedding"],
-         optionally state["k"] → payload["k"].
-      2) Posts to the similarity agent at `url` with JSON payload.
-      3) Yields { output_key: <agent_response_json> }.
+    Reads tenant / collection / embedding (and optional k) from state,
+    POSTs to the similarity agent, and yields the agent's JSON.
     """
     def node(state: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         payload: Dict[str, Any] = {}
-        for state_key, payload_field in input_key_map.items():
-            if state_key in state:
-                payload[payload_field] = state[state_key]
 
-        # If “k” is present in state, forward it
+        for state_key, payload_field in input_key_map.items():
+            if state_key not in state:
+                raise KeyError(f"state['{state_key}'] missing for similarity node")
+            payload[payload_field] = state[state_key]
+
         if "k" in state:
             payload["k"] = state["k"]
 
-        # Must set stream=False (this agent isn’t streaming)
         payload["stream"] = False
-
         resp = requests.post(url, json=payload, timeout=60)
         resp.raise_for_status()
-        data = resp.json()
-        yield {output_key: data}
+        yield {output_key: resp.json()}
 
     return node
 

@@ -17,128 +17,82 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # agent_pool/agents/emb_similarity_ada3large/agent.py
-
-import os
-import traceback
+#
+#!/usr/bin/env python3
+import os, traceback
 from datetime import datetime
 from typing import Any, Dict, List
-
-from chromadb import Client
-from chromadb.config import Settings
-
+from chromadb import PersistentClient
 from agent_pool.base_agent_server import run_server
-from agent_pool.base_vector_db import open_chroma_for, sharded_path
-
+from agent_pool.base_vector_db import open_chroma_for
 
 class EmbSimilarityAda3LargeAgent:
     """
-    Agent that:
-      1. Accepts {"collection": <str>, "vector": <list[float]>, "k": <int, optional>}.
-      2. Opens the corresponding Chroma folder for that collection (sharded) via open_chroma_for().
-      3. Queries “chunks” by cosine similarity against the provided embedding.
-      4. Returns JSON {status, results:[{id, text, metadata, distance}, …]}.
+    JSON in ::
+       { "tenant": "ethz",
+         "collection": "test_collection",
+         "vector": [...],
+         "k": 10 }
+    Returns the k nearest chunks (cosine) from the tenant-scoped Chroma
+    collection.
     """
 
-    def __init__(self):
-        # Nothing to configure here beyond CHROMA_BASE_DIR if desired.
-        pass
-
-    def handle(self, request_json: Dict[str, Any]) -> Dict[str, Any]:
-        response: Dict[str, Any] = {
+    def handle(self, req: Dict[str, Any]) -> Dict[str, Any]:
+        rsp: Dict[str, Any] = {
             "id":      "emb_similarity_ada3large_response",
             "object":  "task_result",
-            "created": int(datetime.utcnow().timestamp()),
+            "created": int(datetime.utcnow().timestamp())
         }
 
-        # 1) Validate inputs
-        collection_name = request_json.get("collection")
-        embedding       = request_json.get("vector")
-        k               = request_json.get("k", 10)
+        tenant      = req.get("tenant")
+        collection  = req.get("collection")
+        embedding   = req.get("vector")
+        k           = req.get("k", 10)
 
-        if not isinstance(collection_name, str) or not collection_name:
-            response.update({
-                "status": 400,
-                "error": "Missing or invalid 'collection' (must be a nonempty string)."
-            })
-            return response
-
-        if (not isinstance(embedding, list)
-            or not all(isinstance(x, (int, float)) for x in embedding)):
-            response.update({
-                "status": 400,
-                "error": "Missing or invalid 'vector' (must be a list of floats)."
-            })
-            return response
-
+        # ---- validate -------------------------------------------------------
+        if not (isinstance(tenant, str) and tenant):
+            rsp.update({"status": 400, "error": "Missing 'tenant'"}); return rsp
+        if not (isinstance(collection, str) and collection):
+            rsp.update({"status": 400, "error": "Missing 'collection'"}); return rsp
+        if not (isinstance(embedding, list) and
+                all(isinstance(x, (int, float)) for x in embedding)):
+            rsp.update({"status": 400, "error": "Invalid 'vector'"}); return rsp
         try:
-            k = int(k)
-            if k <= 0:
-                raise ValueError()
+            k = int(k);  assert k > 0
         except Exception:
-            response.update({
-                "status": 400,
-                "error": "Invalid 'k' (must be a positive integer)."
-            })
-            return response
+            rsp.update({"status": 400, "error": "'k' must be positive int"}); return rsp
 
-        # 2) Open (but do NOT create) the Chroma “chunks” for this collection_name
-        #    open_chroma_for will return None if the collection already exists with
-        #    metadata mismatch, or if it cannot instantiate a PersistentClient.
-        chroma_result = open_chroma_for(collection_name, emb_method="ada3large")
-        if chroma_result is None:
-            # Could not open or metadata disagreed. Determine the expected shard path:
-            shard_dir = os.path.join(
-                os.getenv("CHROMA_BASE_DIR", "/chroma_db"),
-                sharded_path(collection_name)
-            )
-            response.update({
-                "status": 404,
-                "error": (
-                    f"No valid Chroma “chunks” collection found for '{collection_name}'.\n"
-                    f"Expected Chroma directory: {shard_dir}"
-                ),
-                "results": []
-            })
-            return response
+        # ---- open Chroma collection ----------------------------------------
+        chroma = open_chroma_for(tenant=tenant,
+                                 collection_name=collection,
+                                 emb_method="ada3large")
+        if chroma is None:
+            rsp.update({"status": 404,
+                        "error": f"No Chroma shard for {tenant}/{collection}"}); return rsp
+        client, coll = chroma
 
-        client, chr_collection = chroma_result
-
-        # 3) Perform nearest‐neighbor cosine query
+        # ---- query ----------------------------------------------------------
         try:
-            query_result = chr_collection.query(
+            res = coll.query(
                 query_embeddings=[embedding],
                 n_results=k,
                 include=["documents", "metadatas", "distances"]
             )
-            ids_list       = query_result["ids"][0]
-            docs_list      = query_result["documents"][0]
-            metas_list     = query_result["metadatas"][0]
-            distances_list = query_result["distances"][0]
         except Exception as e:
             traceback.print_exc()
-            response.update({
-                "status": 500,
-                "error": f"Error during similarity query: {e}"
-            })
-            return response
+            rsp.update({"status": 500, "error": f"Query failed: {e}"}); return rsp
 
-        # 4) Build result array
         hits: List[Dict[str, Any]] = []
-        for i in range(len(ids_list)):
+        for idx in range(len(res["ids"][0])):
             hits.append({
-                "id":       ids_list[i],
-                "text":     docs_list[i],
-                "metadata": metas_list[i],
-                "distance": distances_list[i]
+                "id":       res["ids"][0][idx],
+                "text":     res["documents"][0][idx],
+                "metadata": res["metadatas"][0][idx],
+                "distance": res["distances"][0][idx]
             })
 
-        # 5) Success
-        response.update({
-            "status": 200,
-            "results": hits
-        })
-        return response
-
+        rsp.update({"status": 200, "results": hits})
+        return rsp
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
