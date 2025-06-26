@@ -2,7 +2,7 @@
 
 # Check if exactly one argument is provided
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 [up|down|ps|flush|log] {service_name}"
+    echo "Usage: $0 [up|down|ps|log] {service_name}"
     exit 1
 fi
 
@@ -20,17 +20,13 @@ case $1 in
         echo "Listing services in the flow stack..."
         docker stack ps ethelflow --no-trunc
         ;;
-    flush)
-        echo "Restarting everything..."
-        systemctl restart docker
-        ;;
     log)
 	echo "Log for ethelflow_$2"
         docker service logs ethelflow_$2
 	;;
     *)
         echo "Invalid argument: $1"
-        echo "Usage: $0 [up|down|ps|flush]"
+        echo "Usage: $0 [up|down|ps]"
         exit 2
         ;;
 esac

@@ -146,19 +146,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
-  mongodb:
-    image: mongo:6.0
-    volumes:
-      - mongo_data:/data/db
-    environment:
-      TZ: "UTC"
-    networks:
-      - ethel_net
-
 
 networks:
   ethel_net:
     external: true
 
-volumes:
-  mongo_data:
