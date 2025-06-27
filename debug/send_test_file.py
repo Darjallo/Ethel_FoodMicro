@@ -28,8 +28,8 @@ def main():
     )
     p.add_argument(
         "--url", "-u",
-        default="https://localhost:8000/upload",
-        help="Flow Manager upload URL (defaults to 'https://localhost:8000/upload')"
+        default="https://localhost:8001/upload",
+        help="Flow Manager upload URL (defaults to 'https://localhost:8001/upload')"
     )
     args = p.parse_args()
 
@@ -77,11 +77,7 @@ def main():
         sys.exit(1)
 
     # 2) Invoke the 'emb_file' flow (streaming)
-    # Determine the base Flow Manager URL (remove "/upload" suffix if present)
-    if args.url.endswith("/upload"):
-        base_url = args.url[:-len("/upload")]
-    else:
-        base_url = args.url.rsplit("/", 1)[0]
+    base_url = "https://localhost:8000"
 
     flow_url = urljoin(base_url + "/", "")  # ensures trailing slash
     # Prefix tenant to file_id
@@ -134,4 +130,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
