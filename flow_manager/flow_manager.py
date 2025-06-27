@@ -16,11 +16,11 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# flow_manager.py (tenant-aware)
+# flow_manager.py
+#
 import os, re, ssl, json, sys, traceback, importlib, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from flow_resume import runs
-from asset_handler import handle_upload, handle_get_files
 from async_agent_handler import handle_async_agent
 
 SSL_PORT = int(os.getenv("SSL_PORT", "8000"))
@@ -29,11 +29,9 @@ SSL_KEY  = os.getenv("SSL_KEY_PATH")
 
 
 class FlowManagerRequestHandler(BaseHTTPRequestHandler):
-    # ─── GET ────────────────────────────────────────────────────────
+    # ───────────────────────────────────────────────── GET ──────────────────────────────────────────────
     def do_GET(self):
-        if self.path.startswith("/files"):
-            return handle_get_files(self)
-
+        # ── /run/<id> : resume metadata ────────────────────────────────────────────────────────────────
         if self.path.startswith("/run/"):
             run_id = self.path.split("/run/")[1]
             doc = runs.find_one({"_id": run_id}, projection={"state": False})
@@ -48,16 +46,17 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
                 self._error(404, {"error": "run not found"})
             return
 
+        # any other GET → 404
         self.send_response(404)
         self.end_headers()
 
-    # ─── POST ───────────────────────────────────────────────────────
+    # ───────────────────────────────────────────────── POST ─────────────────────────────────────────────
     def do_POST(self):
-        if self.path == "/upload":
-            return handle_upload(self)
+        # async agent passthrough (kept)
         if self.path == "/async_agent":
             return handle_async_agent(self)
 
+        # ── normal flow invocation ────────────────────────────────────────────────────────────────────
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length)
         try:
@@ -65,11 +64,10 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return self._error(400, {"error": "Invalid JSON"})
 
-        # ── tenant must be provided in every flow request ─────────
+        # tenant is mandatory
         tenant = req.get("tenant")
         if not tenant or not isinstance(tenant, str):
             return self._error(400, {"error": "Missing or invalid tenant"})
-        # merge tenant into the flow context
         context = req.get("context", {}) or {}
         context["tenant"] = tenant
 
@@ -87,14 +85,26 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
 
         try:
             if req.get("stream"):
-                self._handle_streaming(mod, context, req.get("query", {}), req.get("file_id"), flow)
+                self._handle_streaming(
+                    mod,
+                    context,
+                    req.get("query", {}),
+                    req.get("file_id"),
+                    flow,
+                )
             else:
-                self._handle_non_stream(mod, context, req.get("query", {}), req.get("file_id"), flow)
+                self._handle_non_stream(
+                    mod,
+                    context,
+                    req.get("query", {}),
+                    req.get("file_id"),
+                    flow,
+                )
         except Exception:
             traceback.print_exc()
             self._error(500, {"error": "Internal server error"})
 
-    # ─── Helpers ────────────────────────────────────────────────────
+    # ───────────────────────────────────────────── helpers ─────────────────────────────────────────────
     def _handle_streaming(self, mod, context, query, file_id, flow_name):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -136,6 +146,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # chunked helper
     def _send_chunk(self, data: bytes, end: bool = False):
         if end:
             self.wfile.write(b"0\r\n\r\n")
@@ -143,6 +154,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"{len(data):X}\r\n".encode() + data + b"\r\n")
         self.wfile.flush()
 
+    # error helper
     def _error(self, code: int, payload: dict):
         body = json.dumps(payload).encode()
         self.send_response(code)
@@ -152,6 +164,7 @@ class FlowManagerRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+# ───────────────────────────────────────────── server bootstrap ────────────────────────────────────────
 def run_server():
     server = ThreadingHTTPServer(("0.0.0.0", SSL_PORT), FlowManagerRequestHandler)
     if SSL_CERT and SSL_KEY:
