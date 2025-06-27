@@ -39,8 +39,9 @@ class ReasoningCompletionAgent:
     1) Accepts:
        {
          "messages": [ { "role": "...", "content": "..." }, … ],
-         "file_ids": [ "collection/path/to/image.ext", … ],
+         "file_ids": [ "tenant/collection/path/to/image.ext", … ],
          "stream": <bool>,
+         "tenant": tenant,
          "reasoning_effort": <"minimal"|"moderate"|"maximal"> (optional),
          "schema": { … }  (optional),
        }
@@ -97,16 +98,16 @@ class ReasoningCompletionAgent:
 
     def _fetch_and_encode_file(self, file_id: str) -> Optional[str]:
         """
-        Fetches “collection/path/to/file.ext” from GridFS, returns a data-URL string:
+        Fetches “tenant/collection/path/to/file.ext” from GridFS, returns a data-URL string:
           "data:<mime>;base64,<b64_payload>"
         If the file doesn’t exist or an error occurs, return None.
         """
         if "/" not in file_id:
             return None
 
-        collection_name, path = file_id.split("/", 1)
+        tenant,collection_name, path = file_id.split("/", 2)
         try:
-            gf = self.fs.get_last_version(metadata={"collection": collection_name, "path": path})
+            gf = self.fs.get_last_version(metadata={"tenant": tenant, "collection": collection_name, "path": path})
         except gridfs.NoFile:
             return None
         except Exception:

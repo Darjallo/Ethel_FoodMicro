@@ -28,6 +28,7 @@ def reasoning_completion_node(
         "schema":         "schema",          # optional
         "reasoning_effort": "reasoning_effort", # optional
         "file_ids":       "file_ids",        # optional list[str]
+        "tenant":         "tenant",
         "stream":         "stream"           # optional boolean
     },
     output_key: str = "reasoning_completion_result",
