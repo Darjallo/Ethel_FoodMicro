@@ -28,8 +28,8 @@ def main():
     )
     p.add_argument(
         "--url", "-u",
-        default="https://localhost:8001/upload",
-        help="Flow Manager upload URL (defaults to 'https://localhost:8001/upload')"
+        default="https://localhost/assets/upload",
+        help="Flow Manager upload URL (defaults to 'https://localhost/assets/upload')"
     )
     args = p.parse_args()
 
