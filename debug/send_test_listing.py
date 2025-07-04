@@ -9,7 +9,7 @@ from urllib.parse import quote
 # disable warnings for self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BASE           = "https://localhost:8002"
+BASE           = "https://localhost/assets"
 DEFAULT_TENANT = "ethz"
 DEFAULT_COLL   = "test_collection"
 DEFAULT_PATH   = "test_dir/paper.pdf"
