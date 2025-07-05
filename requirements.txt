@@ -2,6 +2,7 @@ fastapi >= 0.115.12, == 0.115.*
 langgraph >= 0.4.8, == 0.4.*
 langchain >= 0.3.25, == 0.3.*
 langchain-community >= 0.3.25, == 0.3.*
+langgraph >= 0.4.8, == 0.4.*
 pydantic >= 2.11.6, == 2.11.*
 pydantic-settings >= 2.9.1, == 2.9.*
 uvicorn >= 0.34.3, == 0.34.*
