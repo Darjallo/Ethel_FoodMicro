@@ -2,5 +2,9 @@
 .venv
 .vscode
 .ansible
+chromadb
 bazel-*
 __pycache__
+*.pem
+*.key
+*.pdf
