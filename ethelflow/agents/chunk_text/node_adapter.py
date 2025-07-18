@@ -24,7 +24,7 @@ def chunk_text_node(
     *,
     input_text_key: str = "text",  # read state["text"]
     output_key: str = "texts",  # write state["texts"]
-    url: str = "http://chunk_text:8000/",
+    url: str = "http://localhost:8000/",
 ) -> Callable[[Dict[str, Any]], Iterator[Dict[str, Any]]]:
     """
     Builds a node which:
