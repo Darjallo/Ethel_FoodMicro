@@ -29,6 +29,6 @@ class FlowRequest(BaseModel):
         """
         Validate that the flow name is a valid Python module name.
         """
-        if not v or not find_spec(f"flows.{v}"):
+        if not v or not find_spec(f"ethelflow.flows.{v}"):
             raise ValueError(f"No such flow '{v}'")
         return v
