@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ethelflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ethelflow
+  template:
+    metadata:
+      labels:
+        app: ethelflow
+    spec:
+      containers:
+        - name: ethelflow
+          image: registry.ethz.ch/ethel/ethelflow:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "ethelflow"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ethelflow
+spec:
+  selector:
+    app: ethelflow
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
