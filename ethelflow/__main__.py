@@ -27,8 +27,8 @@ async def create_flow(flow_request: FlowRequest):
     Endpoint to create a flow execution request.
     """
     if flow_request.flow_reload:
-        sys.modules.pop(f"flows.{flow_request.flow}", None)
-    mod = importlib.import_module(f"flows.{flow_request.flow}")
+        sys.modules.pop(f"ethelflow.flows.{flow_request.flow}", None)
+    mod = importlib.import_module(f"ethelflow.flows.{flow_request.flow}")
 
     if flow_request.stream:
         return handler_stream(
