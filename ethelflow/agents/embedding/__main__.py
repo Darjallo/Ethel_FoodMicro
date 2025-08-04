@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, Request
-from ethelflow.agents.embedding.models import EmbeddingRequest
-from ethelflow.agents.embedding.settings import settings as embedding_settings
+from ethelflow.agents.embedding.models import EmbeddingRequest, EmbeddingResponse
+from ethelflow.settings.embedding_settings import settings as embedding_settings
 from openai import AsyncAzureOpenAI
 from contextlib import asynccontextmanager
 
@@ -28,9 +28,15 @@ async def get_client(request: Request) -> AsyncAzureOpenAI:
 
 
 @app.post("/embedding")
-async def embed(req: EmbeddingRequest, client: AsyncAzureOpenAI = Depends(get_client)):
-    embeddings = await client.embeddings.create(input=req.texts, model=req.deployment)
-    return embeddings
+async def embed(
+    req: EmbeddingRequest, client: AsyncAzureOpenAI = Depends(get_client)
+) -> EmbeddingResponse:
+    response = await client.embeddings.create(input=req.texts, model=req.deployment)
+    return EmbeddingResponse(
+        embeddings=[item.embedding for item in response.data],
+        model=response.model,
+        usage=response.usage,
+    )
 
 
 if __name__ == "__main__":
