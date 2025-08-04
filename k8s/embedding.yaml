@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embedding
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: embedding
+  template:
+    metadata:
+      labels:
+        app: embedding
+    spec:
+      containers:
+        - name: embedding
+          image: ethelflow:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "ethelflow.agents.embedding"]
+          env:
+            - name: ETHELFLOW_EMBEDDING_API_KEY                
+              value: <your-azure-api-key>
+            - name: ETHELFLOW_EMBEDDING_AZURE_ENDPOINT
+              value: <your-azure-endpoint>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: embedding
+spec:
+  selector:
+    app: embedding
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
