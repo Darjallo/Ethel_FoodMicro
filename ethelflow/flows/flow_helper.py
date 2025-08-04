@@ -1,22 +1,26 @@
 """
 flow_helper.py  — common utilities for Ethel flows
 """
-from typing import Callable, Dict, Iterator, List, Tuple, Any
+
+from typing import Callable, Dict, Iterator, List, Tuple
 from langgraph.graph import StateGraph, START, END
+from langgraph.graph.graph import CompiledGraph
 
 
 # ------------- unchanged helpers ---------------------------------
 def extract_query(mapping: Dict[str, str]) -> Callable[[dict], Iterator[dict]]:
     def _node(state_dict: dict) -> Iterator[dict]:
         q = state_dict.get("query", {}) or {}
-        out = {dst: (q.get(src, "") if isinstance(q.get(src, ""), str) else "")
-               for src, dst in mapping.items()}
+        out = {
+            dst: (q.get(src, "") if isinstance(q.get(src, ""), str) else "")
+            for src, dst in mapping.items()
+        }
         yield out
+
     return _node
 
 
-def linear(builder: StateGraph,
-           ordered_nodes: List[Tuple[str, Callable]]) -> None:
+def linear(builder: StateGraph, ordered_nodes: List[Tuple[str, Callable]]) -> None:
     for idx, (name, fn) in enumerate(ordered_nodes):
         builder.add_node(name, fn)
         if idx == 0:
@@ -27,7 +31,7 @@ def linear(builder: StateGraph,
 
 
 # ------------- FIXED run_flow ------------------------------------
-def run_flow(app, state: dict, stream: bool):
+def run_flow(app: CompiledGraph, state: dict, stream: bool):
     """
     • If stream=True  → yield chunks directly from app.stream.
     • If stream=False → iterate app.stream internally, yield the
@@ -43,4 +47,3 @@ def run_flow(app, state: dict, stream: bool):
         if last is None:
             last = app.invoke(state)
         yield last
-

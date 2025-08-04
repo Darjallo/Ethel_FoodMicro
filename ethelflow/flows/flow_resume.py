@@ -29,18 +29,19 @@ import os
 from datetime import datetime
 from typing import Dict, Any
 from pymongo import MongoClient, ReturnDocument
+from ethelflow.settings.mongodb_settings import settings as mongodb_settings
 
 # --------------------------------------------------------------------
 # Mongo connection
 # --------------------------------------------------------------------
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017")
-MONGO_DB  = os.getenv("MONGO_DB",  "ethel_files")
+MONGO_DB = os.getenv("MONGO_DB", "ethel_files")
 
 client = MongoClient(MONGO_URI)
-db     = client[MONGO_DB]
+db = client[MONGO_DB]
 
-runs  = db.flow_runs      # stores frozen flow state
-tasks = db.human_tasks    # optional: track human-task docs (upsert only)
+runs = db.flow_runs  # stores frozen flow state
+tasks = db.human_tasks  # optional: track human-task docs (upsert only)
 
 # Ensure an index for quick look-ups
 runs.create_index("status")
@@ -50,10 +51,9 @@ tasks.create_index("status")
 # --------------------------------------------------------------------
 # Save a paused run
 # --------------------------------------------------------------------
-def save_run(run_id: str,
-             flow_name: str,
-             state: Dict[str, Any],
-             next_node: str) -> None:
+def save_run(
+    run_id: str, flow_name: str, state: Dict[str, Any], next_node: str
+) -> None:
     """
     Persist (or overwrite) a paused flow run.  'state' must be plain
     JSON-serialisable dict (no custom objects).  next_node is the
@@ -62,24 +62,22 @@ def save_run(run_id: str,
     runs.replace_one(
         {"_id": run_id},
         {
-            "_id":       run_id,
-            "flow":      flow_name,
-            "state":     state,
+            "_id": run_id,
+            "flow": flow_name,
+            "state": state,
             "next_node": next_node,
-            "status":    "waiting_async",
-            "created":   datetime.utcnow(),
-            "updated":   datetime.utcnow(),
+            "status": "waiting_async",
+            "created": datetime.utcnow(),
+            "updated": datetime.utcnow(),
         },
-        upsert=True
+        upsert=True,
     )
 
 
 # --------------------------------------------------------------------
 # Mark async task done & flip run to "resumed"
 # --------------------------------------------------------------------
-def mark_task_done(task_id: str,
-                   run_id: str,
-                   result: Dict[str, Any]) -> None:
+def mark_task_done(task_id: str, run_id: str, result: Dict[str, Any]) -> None:
     """
     * Store the async/human result (optional: in human_tasks collection)
     * Flip the associated run's status to 'resumed'
@@ -88,21 +86,25 @@ def mark_task_done(task_id: str,
     if task_id:
         tasks.update_one(
             {"_id": task_id},
-            {"$set": {
-                "status":    "done",
-                "result":    result,
-                "completed": datetime.utcnow()
-            }},
-            upsert=True
+            {
+                "$set": {
+                    "status": "done",
+                    "result": result,
+                    "completed": datetime.utcnow(),
+                }
+            },
+            upsert=True,
         )
 
     runs.update_one(
         {"_id": run_id},
-        {"$set": {
-            "status":  "resumed",
-            "async_result": result,
-            "updated": datetime.utcnow()
-        }}
+        {
+            "$set": {
+                "status": "resumed",
+                "async_result": result,
+                "updated": datetime.utcnow(),
+            }
+        },
     )
 
 
@@ -117,4 +119,3 @@ def get_run(run_id: str) -> Dict[str, Any] | None:
 def list_waiting() -> list[Dict[str, Any]]:
     """Return all runs waiting for async completion."""
     return list(runs.find({"status": "waiting_async"}))
-
