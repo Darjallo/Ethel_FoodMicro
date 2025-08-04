@@ -14,9 +14,14 @@ spec:
     spec:
       containers:
         - name: ethelflow
-          image: registry.ethz.ch/ethel/ethelflow:latest
-          imagePullPolicy: Always
+          image: ethelflow:latest
+          imagePullPolicy: IfNotPresent
           command: ["python", "-m", "ethelflow"]
+          env:
+            - name: ETHELFLOW_MONGODB_URI
+              value: mongodb://mongodb:27017
+            - name: ETHELFLOW_MONGODB_DB
+              value: ethelflow
 ---
 apiVersion: v1
 kind: Service
