@@ -16,42 +16,46 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-import requests
-from typing import Callable, Iterator, Dict, Any
+from typing import Callable, Dict, Any, AsyncGenerator
+from ethelflow.agents.chunk_text.models import ChunkingRequest, ChunkingResponse
+import aiohttp
+
+# could also be an environment variable
+CHUNK_TEXT_URL: str = "http://chunk-text.default.svc:8000/chunk_text"
 
 
 def chunk_text_node(
-    *,
-    input_text_key: str = "text",  # read state["text"]
-    output_key: str = "texts",  # write state["texts"]
-    url: str = "http://localhost:8000/",
-) -> Callable[[Dict[str, Any]], Iterator[Dict[str, Any]]]:
-    """
-    Builds a node which:
-      1) Reads the string in state[input_text_key].
-      2) POSTS { "text": <that_string> } to http://chunk_text:8000/.
-      3) Yields { output_key: <list of chunk‐strings> }.
-    """
-
-    def node(state: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+    input_text_key: str = "text",
+    output_key: str = "texts",
+) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
+    async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         # 1) Fetch raw text from state
-        raw = state.get(input_text_key, "")
-        if not isinstance(raw, str):
-            text_to_chunk = ""
-        else:
-            text_to_chunk = raw
+        input_text = state.get(input_text_key)
+        if not isinstance(input_text, str):
+            raise ValueError(
+                f"Expected a string for {input_text_key}, got {type(input_text)}"
+            )
 
         # 2) Build payload and POST to the running chunk_text agent
-        payload = {"text": text_to_chunk}
-        resp = requests.post(url, json=payload, timeout=60)
-        resp.raise_for_status()
+        request: ChunkingRequest = ChunkingRequest(
+            text=input_text, chunk_size=40, chunk_overlap=20
+        )
 
-        data = resp.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                CHUNK_TEXT_URL, json=request.model_dump(), timeout=60
+            ) as response:
+                # parse the response into a ChunkingResponse object
+                if response.status != 200:
+                    raise ValueError(
+                        f"Chunking service returned status {response.status}"
+                    )
+                response_data = await response.json()
+                data = ChunkingResponse.model_validate(response_data)
+
         # 3) Extract the “chunks” list (or empty list if missing)
-        chunks_list = data.get("chunks", [])
-        if not isinstance(chunks_list, list):
-            chunks_list = []
-
+        chunks_list = data.chunks or []
+        print("Chunked text:", chunks_list)
         yield {output_key: chunks_list}
 
     return node
