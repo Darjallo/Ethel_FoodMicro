@@ -4,10 +4,13 @@ from ethelflow.flows.flow_resume import save_run
 import uuid
 
 
-def handler(mod: ModuleType, context: dict, query: dict, file_id: str, flow_name: str):
+async def handler(
+    mod: ModuleType, context: dict, query: dict, file_id: str, flow_name: str
+):
     gen = mod.run(context=context, query=query, file_id=file_id, stream=False)
 
-    first = next(gen, {})
+    first = await anext(gen, {})
+
     if first.get("pause"):
         run_id = str(uuid.uuid4())
         save_run(run_id, flow_name, first["state"], first["next_node"])

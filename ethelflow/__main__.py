@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 
 from ethelflow.models import FlowRequest
 from ethelflow.handler import handler, handler_stream
+from ethelflow.flows.flow_resume import runs
+
 import sys
 import importlib
 
@@ -13,8 +15,7 @@ app = FastAPI()
 # an endpoint to get the "run" with a specific id (GET /run/{run_id})
 @app.get("/flow/{run_id}")
 async def get_run(run_id: UUID):
-    # doc = runs.find_one({"_id": run_id}, projection={"state": False})
-    doc = None
+    doc = runs.find_one({"_id": run_id}, projection={"state": False})
     if not doc:  # return 404 if run not found
         raise HTTPException(status_code=404, detail="Run not found")
 
@@ -39,7 +40,7 @@ async def create_flow(flow_request: FlowRequest):
             flow_request.flow,
         )
     else:
-        return handler(
+        return await handler(
             mod,
             flow_request.context,
             flow_request.query,
