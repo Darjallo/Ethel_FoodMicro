@@ -1,5 +1,6 @@
 import ast
 import base64
+from multiprocessing.pool import AsyncResult
 import uuid
 
 from contextlib import asynccontextmanager
@@ -7,7 +8,7 @@ from fastapi import FastAPI, HTTPException
 from kubernetes import client, config
 
 from ethelflow.agents.executor.models import ExecutionRequest, ExecutionResult
-
+import time
 
 NAMESPACE = "default"
 
@@ -59,17 +60,11 @@ async def execute_code(req: ExecutionRequest):
 
     # Create ConfigMap
     execution_name = f"execution-{execution_id.hex[:8]}"
-    config_map = client.V1ConfigMap(
-        metadata=client.V1ObjectMeta(name=execution_name),
-        data={
-            "script.py": code,
-        },
-    )
-    core_v1.create_namespaced_config_map(namespace=NAMESPACE, body=config_map)
 
-    # Create Job
-    job = client.V1Job(
-        metadata=client.V1ObjectMeta(name=execution_name),
+    job_manifest = client.V1Job(
+        metadata=client.V1ObjectMeta(
+            name=execution_name,
+        ),
         spec=client.V1JobSpec(
             backoff_limit=0,
             template=client.V1PodTemplateSpec(
@@ -77,6 +72,7 @@ async def execute_code(req: ExecutionRequest):
                     labels={"ethel.ethz.ch/execution-id": str(execution_id)}
                 ),
                 spec=client.V1PodSpec(
+                    # TODO: resource limits, security context, etc.
                     restart_policy="Never",
                     containers=[
                         client.V1Container(
@@ -96,7 +92,7 @@ async def execute_code(req: ExecutionRequest):
                         client.V1Volume(
                             name="script-volume",
                             config_map=client.V1ConfigMapVolumeSource(
-                                name=config_map.metadata.name
+                                name=execution_name
                             ),
                         )
                     ],
@@ -105,11 +101,67 @@ async def execute_code(req: ExecutionRequest):
         ),
     )
 
-    batch_v1.create_namespaced_job(namespace=NAMESPACE, body=job)
+    job_result: AsyncResult = batch_v1.create_namespaced_job(
+        namespace=NAMESPACE, body=job_manifest, async_req=True
+    )
 
-    # TODO: watch the job, and return the stdout and stderr
+    config_map_manifest = client.V1ConfigMap(
+        metadata=client.V1ObjectMeta(
+            name=execution_name,
+            owner_references=[
+                client.V1OwnerReference(
+                    api_version="batch/v1",
+                    kind="Job",
+                    name=job_result.get().metadata.name,
+                    uid=job_result.get().metadata.uid,
+                    controller=False,
+                    block_owner_deletion=True,
+                )
+            ],
+        ),
+        data={
+            "script.py": code,
+        },
+    )
+    core_v1.create_namespaced_config_map(namespace=NAMESPACE, body=config_map_manifest)
+
+    print(f"Job created with uid: {job_result.get().metadata.uid}")
+
+    # watch the job, and return the stdout and stderr
+    pod_name = None
+    for _ in range(30):
+        pods = core_v1.list_namespaced_pod(
+            namespace=NAMESPACE,
+            label_selector=f"ethel.ethz.ch/execution-id={execution_id}",
+        ).items
+        if pods:
+            pod = pods[0]
+            pod_name = pod.metadata.name
+            print(f"Found pod: {pod_name}")
+            break
+
+    # wait for the pod to complete
+    if not pod_name:
+        raise HTTPException(status_code=500, detail="Pod not found")
+
+    for _ in range(30):
+        pod = core_v1.read_namespaced_pod(name=pod_name, namespace=NAMESPACE)
+        if pod.status.phase in ("Succeeded", "Failed"):
+            print(f"Pod {pod_name} completed with status: {pod.status.phase}")
+            break
+        time.sleep(2)
+    else:
+        raise HTTPException(status_code=500, detail="Pod did not complete in time")
+
+    try:
+        pod = core_v1.read_namespaced_pod(name=pod_name, namespace=NAMESPACE)
+        exit_code = pod.status.container_statuses[0].state.terminated.exit_code
+        logs = core_v1.read_namespaced_pod_log(name=pod_name, namespace=NAMESPACE)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading pod logs: {str(e)}")
+
     return ExecutionResult(
-        execution_id=execution_id, return_code=0, stdout="logs", stderr=""
+        execution_id=execution_id, return_code=exit_code, stdout=logs, stderr=logs
     )
 
 
