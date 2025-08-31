@@ -13,40 +13,33 @@ import time
 NAMESPACE = "default"
 
 
-# @asynccontextmanager
-# async def lifespan(app: FastAPI):
-#     # setup kubeconfig
-#     try:
-#         config.load_incluster_config()
-#         print("Kubernetes config loaded successfully.")
-#     except config.ConfigException:
-#         raise RuntimeError(
-#             "Kubernetes config not found. Ensure running in cluster or set kubeconfig path."
-#         )
-#     yield
-
-
-app = FastAPI()
-
-
-@app.post("/execute")
-async def execute_code(req: ExecutionRequest):
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     try:
         config.load_incluster_config()
-        print("Kubernetes config loaded successfully.")
-        core_v1 = client.CoreV1Api()
-        batch_v1 = client.BatchV1Api()
+        app.state.batch_v1 = client.BatchV1Api()
+        app.state.core_v1 = client.CoreV1Api()
     except config.ConfigException:
         raise RuntimeError(
             "Kubernetes config not found. Ensure running in cluster or set kubeconfig path."
         )
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.post("/execute")
+async def execute_code(req: ExecutionRequest):
+    batch_v1: client.BatchV1Api = app.state.batch_v1
+    core_v1: client.CoreV1Api = app.state.core_v1
     try:
         code = base64.b64decode(req.code_b64).decode()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid base64 encoding")
 
     # Check syntax (might add more checks later, e.g. check if executable at all)
-    # This check doesn't catch most stuff
+    # This check doesn't catch most stuff and works only for Python
     try:
         ast.parse(code)
     except SyntaxError as e:
