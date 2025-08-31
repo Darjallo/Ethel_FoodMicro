@@ -1,58 +1,37 @@
-# Project Ethel
-# Node adapter to convert files to text
-#
-# Copyright (C) 2025  Gerd Kortemeyer, ETH Zurich
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#
-import os
-import requests
-from typing import Callable, Iterator, Dict, Any
+from typing import Callable, Dict, Any, AsyncGenerator
+from ethelflow.agents.file_to_text.models import FileToTextRequest, FileToTextResponse
+import aiohttp
+import uuid
+
+FILE_TO_TEXT_URL = "http://file-to-text.default.svc:8000/file_to_text"
+
 
 def file_to_text_node(
-    *,
-    input_key_map: Dict[str, str] = {"file_id": "file_id"},
-    output_key: str = "file_to_text_result",
-    url: str = None,
-) -> Callable[[Dict[str, Any]], Iterator[Dict[str, Any]]]:
-    """
-    Builds a node which:
-      1) Reads a key in state (default state["file_id"]) → payload["file_id"]
-      2) POSTs to the file_to_text agent at `url`
-      3) Yields { output_key: <response JSON> }
+    document_id_key: str = "document_id",
+    output_key: str = "text",
+) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
+    async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+        document_id = state.get(document_id_key)
+        if not isinstance(document_id, uuid.UUID):
+            raise ValueError(
+                f"Expected a UUID for {document_id_key}, but got {type(document_id)}"
+            )
 
-    By default:
-      - input_key_map={"file_id":"file_id"}  (so it reads state["file_id"])
-      - output_key="file_to_text_result"
-      - url defaults to "http://file_to_text:8000/" (inside Docker-compose, adjust if needed)
-    """
-    if url is None:
-        # assume a docker‐service name “file_to_text” on port 8000
-        url = os.getenv("FILE_TO_TEXT_URL", "http://file_to_text:8000/")
+        request = FileToTextRequest(document_id=document_id)
 
-    def node(state: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        payload: Dict[str, Any] = {}
-        for state_key, payload_field in input_key_map.items():
-            payload[payload_field] = state.get(state_key, "")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                FILE_TO_TEXT_URL, json=request.model_dump(mode="json")
+            ) as response:
+                if response.status != 200:
+                    error_detail = await response.text()
+                    raise ValueError(
+                        f"File-to-text service returned status {response.status}: {error_detail}"
+                    )
 
-        # ensure no streaming parameter is sent
-        payload["stream"] = False
+                response_data = await response.json()
+                data = FileToTextResponse.model_validate(response_data)
 
-        resp = requests.post(url, json=payload, timeout=300)
-        resp.raise_for_status()
-        data = resp.json()
-        yield {output_key: data}
+        yield {output_key: data.text}
 
     return node
-
