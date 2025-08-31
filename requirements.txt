@@ -12,3 +12,8 @@ pymongo >= 4.13.2, == 4.13.*
 pgvector >= 0.4.1, == 0.4.*
 psycopg[binary,pool] >= 3.2.9, == 3.2.*
 kubernetes >= 33.1.0, == 33.1.*
+sqlmodel >= 0.0.24, == 0.0.*
+alembic >= 1.16.4, == 1.16.*
+boto3 >= 1.40.21, == 1.40.*
+python-multipart >= 0.0.20, == 0.0.*
+pypdf >= 6.0.0, == 6.0.*
