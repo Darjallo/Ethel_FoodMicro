@@ -1,5 +1,5 @@
 # Project Ethel
-# Node adapter for storing the embeddings
+# Node adapter for storing vectors
 #
 # Copyright (C) 2025  Gerd Kortemeyer, ETH Zurich
 #
@@ -16,34 +16,59 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-import requests
-from typing import Callable, Iterator, Dict, Any
+from typing import Callable, Dict, Any, AsyncGenerator
+from ethelflow.agents.store_vectors.models import (
+    StoreVectorsRequest,
+    StoreVectorsResponse,
+)
+import aiohttp
+import uuid
+
+# could also be an environment variable
+STORE_VECTORS_URL: str = "http://store-vectors.default.svc:8000/store_vectors"
+
 
 def store_vectors_node(
-    *,
-    input_key_map: Dict[str, str] = {
-        "tenant":     "tenant",      # NEW
-        "file_id":    "file_id",
-        "texts":      "texts",
-        "embeddings": "embeddings"
-    },
-    output_key: str = "store_vectors_result",
-    url: str = "http://store_vectors:8000/",
-) -> Callable[[dict], Iterator[dict]]:
-    """
-    Sends tenant, file_id, texts, embeddings to the store_vectors agent.
-    """
-    def node(state: dict) -> Iterator[dict]:
-        payload: Dict[str, Any] = {}
-        for state_key, payload_field in input_key_map.items():
-            if state_key not in state:
-                raise KeyError(f"state['{state_key}'] missing for store_vectors_node")
-            payload[payload_field] = state[state_key]
+    embeddings_key: str = "embeddings",
+    chunk_ids_key: str = "chunk_ids",
+    output_key: str = "store_vectors_response",
+) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
+    async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+        # 1) Fetch data from state
+        embeddings = state.get(embeddings_key)
+        if not isinstance(embeddings, list) or not all(
+            isinstance(embedding, list) for embedding in embeddings
+        ):
+            raise ValueError(
+                f"Expected list of lists of floats for {embeddings_key}, got {type(embeddings)}"
+            )
 
-        payload["stream"] = False
-        resp = requests.post(url, json=payload, timeout=120)
-        resp.raise_for_status()
-        yield {output_key: resp.json()}
+        chunk_ids = state.get(chunk_ids_key)
+        if not isinstance(chunk_ids, list) or not all(
+            isinstance(chunk_id, uuid.UUID) for chunk_id in chunk_ids
+        ):
+            raise ValueError(
+                f"Expected list of UUIDs for {chunk_ids_key}, got {type(chunk_ids)}"
+            )
+
+        # 2) Build payload and POST to the running store_vectors agent
+        request = StoreVectorsRequest(
+            embeddings=embeddings,
+            chunk_ids=chunk_ids,
+        )
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                STORE_VECTORS_URL, json=request.model_dump(mode="json"), timeout=60
+            ) as response:
+                if response.status != 200:
+                    raise ValueError(
+                        f"Store vectors service returned status {response.status}"
+                    )
+                response_data = await response.json()
+
+                data = StoreVectorsResponse.model_validate(response_data)
+
+        yield {output_key: data}
 
     return node
-
