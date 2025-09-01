@@ -38,7 +38,9 @@ class ChunkSet(SQLModel, table=True):
     created_at: Optional[str] = Field(default=None)
 
     document: EthelDocument = Relationship(back_populates="chunk_sets")
-    chunks: List["Chunk"] = Relationship(back_populates="chunk_set")
+    chunks: List["Chunk"] = Relationship(
+        back_populates="chunk_set", cascade_delete=True
+    )
 
 
 class Chunk(SQLModel, table=True):
@@ -48,7 +50,9 @@ class Chunk(SQLModel, table=True):
         default_factory=uuid.uuid4,
         sa_column=Column(UUID(as_uuid=True), primary_key=True),
     )
-    chunk_set_id: uuid.UUID = Field(foreign_key="chunksets.id", nullable=False)
+    chunk_set_id: uuid.UUID = Field(
+        foreign_key="chunksets.id", nullable=False, ondelete="CASCADE"
+    )
     text: str
     position: int
 
