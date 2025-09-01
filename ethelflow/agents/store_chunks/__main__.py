@@ -23,6 +23,9 @@ async def store_chunks(
     req: StoreChunksRequest, session: Session = Depends(get_session)
 ):
     try:
+        print(
+            f"Storing chunks for document {req.document_id} with method {req.method}, number of chunks: {len(req.chunks)}"
+        )
         chunk_set = ChunkSet(document_id=req.document_id, method=req.method)
         session.add(chunk_set)
         session.commit()
@@ -44,7 +47,8 @@ async def store_chunks(
 
     except Exception as e:
         session.rollback()
-        return StoreChunksResponse(success=False, message=str(e))
+        raise e
+        # return StoreChunksResponse(success=False, message=str(e))
 
 
 if __name__ == "__main__":

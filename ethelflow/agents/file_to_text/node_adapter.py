@@ -11,11 +11,16 @@ def file_to_text_node(
     output_key: str = "text",
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
-        document_id = state.get(document_id_key)
-        if not isinstance(document_id, uuid.UUID):
+        try:
+            document_id = uuid.UUID((state.get(document_id_key)))
+        except ValueError as e:
             raise ValueError(
-                f"Expected a UUID for {document_id_key}, but got {type(document_id)}"
-            )
+                f"Invalid UUID format for {document_id_key}: {state.get(document_id_key)}"
+            ) from e
+        # if not isinstance(document_id, uuid.UUID):
+        #     raise ValueError(
+        #         f"Expected a UUID for {document_id_key}, but got {type(document_id)}"
+        #     )
 
         request = FileToTextRequest(document_id=document_id)
 

@@ -18,11 +18,12 @@ def store_chunks_node(
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         # 1) Fetch data from state
-        document_id = state.get(document_id_key)
-        if not isinstance(document_id, uuid.UUID):
+        try:
+            document_id = uuid.UUID((state.get(document_id_key)))
+        except ValueError as e:
             raise ValueError(
-                f"Expected UUID for {document_id_key}, got {type(document_id)}"
-            )
+                f"Invalid UUID format for {document_id_key}: {state.get(document_id_key)}"
+            ) from e
 
         chunks = state.get(chunks_key)
         if not isinstance(chunks, list) or not all(
