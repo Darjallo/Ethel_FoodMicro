@@ -49,7 +49,6 @@ async def create_document(
     object_name = str(uuid.uuid4())
     try:
         s3_manager.upload_file(file.file, object_name)
-        file.content_type
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload asset: {e}")
 
