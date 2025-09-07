@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Any, Optional, List
 from sqlmodel import SQLModel, Field, Relationship, Column
 from sqlalchemy.dialects.postgresql import UUID
 from pgvector.sqlalchemy import Vector
@@ -78,7 +78,9 @@ class TextEmbedding3LargeEmbedding(SQLModel, table=True):
         default_factory=uuid.uuid4,
         sa_column=Column(UUID(as_uuid=True), primary_key=True),
     )
-    chunk_id: uuid.UUID = Field(foreign_key="chunks.id", nullable=False)
+    chunk_id: uuid.UUID = Field(
+        foreign_key="chunks.id", nullable=False, ondelete="CASCADE"
+    )
     vector: List[float] = Field(
         sa_column=Column(Vector(3072))
     )  # dimension fixed per model
