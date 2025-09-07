@@ -11,6 +11,7 @@ def reasoning_node(
     content_type_key: str = "content_type",
     prompt_key: str = "prompt",
     reasoning_effort_key: str = "reasoning_effort",
+    stream_key: str = "stream",
     output_key: str = "reasoning_response",
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
@@ -18,6 +19,7 @@ def reasoning_node(
         content_type = state.get(content_type_key)
         prompt = state.get(prompt_key)
         reasoning_effort = state.get(reasoning_effort_key)
+        stream = state.get(stream_key, False)
 
         if not isinstance(document_id, uuid.UUID):
             raise ValueError(
@@ -44,6 +46,7 @@ def reasoning_node(
                 content_type=content_type,
                 prompt=prompt,
                 reasoning_effort=reasoning_effort,
+                stream=stream,
             )
 
             async with session.post(
@@ -54,8 +57,16 @@ def reasoning_node(
                     raise ValueError(
                         f"Reasoning service returned status {response.status}: {error_text}"
                     )
-                response_data = await response.json()
-                data = ReasoningResponse.model_validate(response_data)
-                yield {output_key: data.response}
+
+                if stream:
+                    full_response = ""
+                    async for chunk in response.content.iter_any():
+                        chunk_text = chunk.decode("utf-8")
+                        full_response += chunk_text
+                        yield {output_key: chunk_text}
+                else:
+                    response_data = await response.json()
+                    data = ReasoningResponse.model_validate(response_data)
+                    yield {output_key: data.response}
 
     return node

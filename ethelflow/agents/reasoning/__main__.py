@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, Request
+from fastapi.responses import StreamingResponse
 from ethelflow.agents.reasoning.models import ReasoningRequest, ReasoningResponse
 from ethelflow.settings.reasoning_settings import settings as reasoning_settings
 from ethelflow.assets.s3 import s3_manager
@@ -30,11 +31,19 @@ async def get_client(request: Request) -> AsyncAzureOpenAI:
     return client
 
 
+async def stream_generator(response_stream):
+    async for chunk in response_stream:
+        if chunk.choices:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
+
+
 @app.post("/reasoning")
 async def reason(
     req: ReasoningRequest,
     client: AsyncAzureOpenAI = Depends(get_client),
-) -> ReasoningResponse:
+):
     # 1. Download the file from S3
     file_object = io.BytesIO()
     s3_manager.download_file(str(req.document_id), file_object)
@@ -64,17 +73,24 @@ async def reason(
     else:
         raise NotImplementedError(f"Unsupported content type: {req.content_type}")
 
+    # 3. Call Azure OpenAI
     completion_params = {
         "model": req.deployment,
         "messages": messages,
         "max_completion_tokens": 4096,
+        "stream": req.stream,
     }
     if req.reasoning_effort is not None:
         completion_params["reasoning_effort"] = req.reasoning_effort
 
     response = await client.chat.completions.create(**completion_params)
 
-    return ReasoningResponse(response=response.choices[0].message.content)
+    if req.stream:
+        return StreamingResponse(
+            stream_generator(response), media_type="text/event-stream"
+        )
+    else:
+        return ReasoningResponse(response=response.choices[0].message.content)
 
 
 if __name__ == "__main__":

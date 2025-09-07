@@ -9,6 +9,7 @@ class ReasoningRequest(BaseModel):
     prompt: str
     deployment: Optional[str] = "gpt-4o"
     reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
+    stream: Optional[bool] = False
 
 
 class ReasoningResponse(BaseModel):
