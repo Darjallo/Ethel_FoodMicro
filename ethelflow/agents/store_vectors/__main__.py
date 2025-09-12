@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Depends
-from sqlmodel import create_engine, Session, select, AsyncSession
+from sqlmodel import create_engine, Session, select
 from ethelflow.agents.store_vectors.models import (
     StoreVectorsRequest,
     StoreVectorsResponse,
@@ -20,7 +20,7 @@ app = FastAPI()
 
 @app.post("/store_vectors", response_model=StoreVectorsResponse)
 async def store_vectors(
-    req: StoreVectorsRequest, session: AsyncSession = Depends(get_session)
+    req: StoreVectorsRequest, session: Session = Depends(get_session)
 ):
     try:
         statement = select(EmbeddingModel).where(EmbeddingModel.name == req.model_name)
