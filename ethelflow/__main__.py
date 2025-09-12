@@ -10,7 +10,6 @@ import uuid
 
 from ethelflow.models import FlowRequest
 from ethelflow.handler import handler, handler_stream
-from ethelflow.flows.flow_resume import runs
 
 import sys
 import importlib
@@ -30,11 +29,12 @@ def get_session():
 # an endpoint to get the "run" with a specific id (GET /run/{run_id})
 @app.get("/flow/{run_id}")
 async def get_run(run_id: UUID):
-    doc = runs.find_one({"_id": run_id}, projection={"state": False})
-    if not doc:  # return 404 if run not found
-        raise HTTPException(status_code=404, detail="Run not found")
+    # doc = runs.find_one({"_id": run_id}, projection={"state": False})
+    # if not doc:  # return 404 if run not found
+    #     raise HTTPException(status_code=404, detail="Run not found")
 
-    return doc
+    # return doc
+    return NotImplementedError("This endpoint is not implemented yet.")
 
 
 # add a file to the etheldocuments table (POST /documents)

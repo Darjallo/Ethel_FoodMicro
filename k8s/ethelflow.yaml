@@ -26,10 +26,6 @@ spec:
               value: minio123
             - name: ETHELFLOW_S3_BUCKET_NAME
               value: ethel
-            - name: ETHELFLOW_MONGODB_URI
-              value: mongodb://mongodb:27017
-            - name: ETHELFLOW_MONGODB_DB
-              value: ethelflow
             - name: ETHELFLOW_POSTGRES_HOST
               value: postgres
             - name: ETHELFLOW_POSTGRES_PORT
