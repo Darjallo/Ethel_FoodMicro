@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reasoning
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reasoning
+  template:
+    metadata:
+      labels:
+        app: reasoning
+    spec:
+      containers:
+        - name: reasoning
+          image: ethelflow:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "ethelflow.agents.reasoning"]
+          env:
+            - name: ETHELFLOW_S3_ENDPOINT_URL
+              value: http://minio:9000
+            - name: ETHELFLOW_S3_ACCESS_KEY
+              value: minio
+            - name: ETHELFLOW_S3_SECRET_KEY
+              value: minio123
+            - name: ETHELFLOW_S3_BUCKET_NAME
+              value: ethel
+            - name: ETHELFLOW_EMBEDDING_API_KEY                
+              value: <your-azure-api-key>
+            - name: ETHELFLOW_EMBEDDING_AZURE_ENDPOINT
+              value: <your-azure-endpoint>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reasoning
+spec:
+  selector:
+    app: reasoning
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
