@@ -7,6 +7,7 @@ REASONING_URL: str = "http://reasoning.default.svc:8000/reasoning"
 
 
 def reasoning_node(
+    deployment_key: str = "deployment",
     document_id_key: str = "document_id",
     content_type_key: str = "content_type",
     prompt_key: str = "prompt",
@@ -15,6 +16,7 @@ def reasoning_node(
     output_key: str = "reasoning_response",
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+        deployment = state.get(deployment_key)
         document_id = state.get(document_id_key)
         content_type = state.get(content_type_key)
         prompt = state.get(prompt_key)
@@ -42,6 +44,7 @@ def reasoning_node(
 
         async with aiohttp.ClientSession() as session:
             request = ReasoningRequest(
+                deployment=deployment,
                 document_id=document_id,
                 content_type=content_type,
                 prompt=prompt,
