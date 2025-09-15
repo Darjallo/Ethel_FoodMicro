@@ -85,22 +85,13 @@ async def create_flow(flow_request: FlowRequest):
         sys.modules.pop(f"ethelflow.flows.{flow_request.flow}", None)
     mod = importlib.import_module(f"ethelflow.flows.{flow_request.flow}")
 
-    if flow_request.stream:
-        return handler_stream(
-            mod,
-            flow_request.context,
-            flow_request.query,
-            flow_request.file_id,
-            flow_request.flow,
-        )
-    else:
-        return await handler(
-            mod,
-            flow_request.context,
-            flow_request.query,
-            flow_request.file_id,
-            flow_request.flow,
-        )
+    return await handler(
+        mod,
+        flow_request.context,
+        flow_request.query,
+        flow_request.file_id,
+        flow_request.stream,
+    )
 
 
 if __name__ == "__main__":

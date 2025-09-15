@@ -1,64 +1,76 @@
-# flow_manager/flows/reasoning_test.py
-from typing import TypedDict, Dict, Any, List
-from langgraph.graph import StateGraph, START, END
-from ethelflow.agents.reasoning_completion.node_adapter import reasoning_completion_node
-from ethelflow.flows.flow_helper import extract_query, run_flow
+from typing import TypedDict, Optional
+import uuid
+from langgraph.graph import StateGraph
+from ethelflow.agents.reasoning.node_adapter import reasoning_node
 
 
 class ReasoningTestState(TypedDict, total=False):
-    context: dict
-    query: Dict[str, Any]
-    stream: bool
-
-    # pulled from query
+    deployment: str
+    document_id: uuid.UUID
+    content_type: str
     prompt: str
-    fid: str
-
-    # open-ai style
-    messages: List[Dict[str, str]]
-    file_ids: List[str]
-
-    reasoning_result: Dict[str, Any]
+    reasoning_effort: Optional[str]
+    stream: bool
+    reasoning_response: str
 
 
-def run(context=None, query=None, file_id=None, stream=False):
-    state: ReasoningTestState = {
-        "context": context,
-        "query": query or {},
+async def run(context=None, query=None, file_id=None, stream=False):
+    """
+    Runs a test of the reasoning agent.
+    """
+    if not context or not isinstance(context, dict):
+        raise ValueError("Missing or invalid context dictionary")
+
+    prompt = context.get("prompt")
+    if not prompt:
+        raise ValueError("Missing 'prompt' in context")
+
+    content_type = context.get("content_type")
+    if not content_type:
+        raise ValueError("Missing 'content_type' in context")
+
+    document_id = context.get("document_id")
+    if not document_id:
+        raise ValueError("Missing 'document_id' in context")
+
+    deployment = context.get("deployment")
+    if not deployment:
+        raise ValueError("Missing 'deployment' in context")
+
+    reasoning_effort = context.get("reasoning_effort")
+
+    initial_state: ReasoningTestState = {
+        "deployment": deployment,
+        "document_id": uuid.UUID(document_id),
+        "content_type": content_type,
+        "prompt": prompt,
+        "reasoning_effort": reasoning_effort,
         "stream": stream,
     }
-    builder = StateGraph(ReasoningTestState)
 
-    # 1) pull "prompt" and "file_id" out of query
-    builder.add_node("pull", extract_query({"prompt": "prompt", "file_id": "fid"}))
-    builder.add_edge(START, "pull")
+    workflow = StateGraph(ReasoningTestState)
 
-    # 2) build messages / file_ids lists
-    def mk_openai(st):
-        prompt = st.get("prompt", "")
-        fid = st.get("fid", "")
-        yield {
-            "messages": [{"role": "user", "content": prompt}],
-            "file_ids": [fid] if fid else [],
-        }
-
-    builder.add_node("format", mk_openai)
-    builder.add_edge("pull", "format")
-
-    # 3) reasoning agent
-    builder.add_node(
-        "reason",
-        reasoning_completion_node(
-            input_key_map={
-                "messages": "messages",
-                "file_ids": "file_ids",
-                "stream": "stream",
-            },
-            output_key="reasoning_result",
+    workflow.add_node(
+        "reasoning",
+        reasoning_node(
+            document_id_key="document_id",
+            content_type_key="content_type",
+            prompt_key="prompt",
+            reasoning_effort_key="reasoning_effort",
+            stream_key="stream",
+            output_key="reasoning_response",
         ),
     )
-    builder.add_edge("format", "reason")
-    builder.add_edge("reason", END)
 
-    app = builder.compile()
-    yield from run_flow(app, state, stream)
+    workflow.set_entry_point("reasoning")
+    workflow.set_finish_point("reasoning")
+
+    # Compile the graph
+    app = workflow.compile()
+
+    if stream:
+        async for item in app.astream_events(initial_state, version="v2"):
+            if item["event"] == "on_chain_stream":
+                yield item["data"]["chunk"]["reasoning_response"]
+    else:
+        yield await app.ainvoke(initial_state)
