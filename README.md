@@ -1,5 +1,12 @@
 # EthelFlow
 
+## Development
+
+Use `uv` for managing the project Python virtual environment.
+
+- Upgrading dependencies (respects semver ranges in `requirements.txt`): `uv pip compile requirements.txt -o requirements_lock.txt --generate-hashes`
+- Creating venv: `uv venv .venv`
+
 ## Local setup
 
 ### Prerequisites
