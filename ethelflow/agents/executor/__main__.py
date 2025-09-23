@@ -33,20 +33,32 @@ app = FastAPI(lifespan=lifespan)
 async def execute_code(req: ExecutionRequest):
     batch_v1: client.BatchV1Api = app.state.batch_v1
     core_v1: client.CoreV1Api = app.state.core_v1
-    try:
-        code = base64.b64decode(req.code_b64).decode()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid base64 encoding")
 
-    # Check syntax (might add more checks later, e.g. check if executable at all)
-    # This check doesn't catch most stuff and works only for Python
-    try:
-        ast.parse(code)
-    except SyntaxError as e:
-        raise HTTPException(status_code=400, detail=f"Syntax error: {e.msg}")
+    if req.type == "python":
+        try:
+            code = base64.b64decode(req.code_b64).decode()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid base64 encoding")
+
+        # Check syntax (might add more checks later, e.g. check if executable at all)
+        # This check doesn't catch most stuff and works only for Python
+        try:
+            ast.parse(code)
+        except SyntaxError as e:
+            raise HTTPException(status_code=400, detail=f"Syntax error: {e.msg}")
 
     # TODO: dynamic command, depending on execution type
-    command = ["python3", "/scripts/script.py"]
+    if req.type == "python":
+        command = ["python3", "/scripts/script.py"]
+    elif req.type == "maxima":
+        command = ["maxima", "--very-quiet", "--batch-string", req.expr, "2>/dev/null"]
+        code = "dummy"
+    elif req.type == "r":
+        raise HTTPException(status_code=501, detail="R execution not implemented yet")
+    else:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown execution type: {req.type}"
+        )
 
     execution_id = uuid.uuid4()
     print(f"Execution ID: {execution_id}")
@@ -71,6 +83,7 @@ async def execute_code(req: ExecutionRequest):
                         client.V1Container(
                             name="executor",
                             image=req.image,
+                            image_pull_policy="IfNotPresent",
                             command=command,
                             volume_mounts=[
                                 client.V1VolumeMount(
