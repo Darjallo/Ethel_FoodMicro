@@ -526,7 +526,12 @@ langgraph-checkpoint==2.0.26 \
     --hash=sha256:ad4907858ed320a208e14ac037e4b9244ec1cb5aa54570518166ae8b25752cec
     # via
     #   langgraph
+    #   langgraph-checkpoint-postgres
     #   langgraph-prebuilt
+langgraph-checkpoint-postgres==2.0.23 \
+    --hash=sha256:0962daa924eaa564380429742df217287ac579b377aae6c1abad9f1c2cfbee53 \
+    --hash=sha256:d85b53c2efbd8d36d7bb8ca3491ed5601fddaf4f37b0e6eb961639a8edb33873
+    # via -r requirements.txt
 langgraph-prebuilt==0.2.2 \
     --hash=sha256:0a5d1f651f97c848cd1c3dd0ef017614f47ee74effb7375b59ac639e41b253f9 \
     --hash=sha256:72de5ef1d969a8f02ad7adc7cc1915bb9b4467912d57ba60da34b5a70fdad1f6
@@ -864,6 +869,7 @@ orjson==3.10.18 \
     --hash=sha256:fdd9d68f83f0bc4406610b1ac68bdcded8c5ee58605cc69e643a06f4d075f429 \
     --hash=sha256:fe8936ee2679e38903df158037a2f1c108129dee218975122e37847fb1d4ac68
     # via
+    #   langgraph-checkpoint-postgres
     #   langgraph-sdk
     #   langsmith
 ormsgpack==1.10.0 \
@@ -1025,7 +1031,9 @@ propcache==0.3.2 \
 psycopg==3.2.9 \
     --hash=sha256:01a8dadccdaac2123c916208c96e06631641c0566b22005493f09663c7a8d3b6 \
     --hash=sha256:2fbb46fcd17bc81f993f28c47f1ebea38d66ae97cc2dbc3cad73b37cefbff700
-    # via -r requirements.txt
+    # via
+    #   -r requirements.txt
+    #   langgraph-checkpoint-postgres
 psycopg-binary==3.2.9 \
     --hash=sha256:001e986656f7e06c273dd4104e27f4b4e0614092e544d950c7c938d822b1a894 \
     --hash=sha256:08bf9d5eabba160dd4f6ad247cf12f229cc19d2458511cab2eb9647f42fa6795 \
@@ -1096,7 +1104,9 @@ psycopg-binary==3.2.9 \
 psycopg-pool==3.2.6 \
     --hash=sha256:0f92a7817719517212fbfe2fd58b8c35c1850cdd2a80d36b581ba2085d9148e5 \
     --hash=sha256:5887318a9f6af906d041a0b1dc1c60f8f0dda8340c2572b74e10907b51ed5da7
-    # via psycopg
+    # via
+    #   langgraph-checkpoint-postgres
+    #   psycopg
 pyasn1==0.6.1 \
     --hash=sha256:0d632f46f2ba09143da3a8afe9e33fb6f92fa2320ab7e886e2d0f7672af84629 \
     --hash=sha256:6f580d2bdd84365380830acf45550f2511469f673cb4a5ae3857a3170128b034
