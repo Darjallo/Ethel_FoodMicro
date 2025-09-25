@@ -67,6 +67,9 @@ def reasoning_node(
                         chunk_text = chunk.decode("utf-8")
                         full_response += chunk_text
                         yield {output_key: chunk_text}
+
+                    yield {output_key: None}  # Indicate end of stream
+                    yield {output_key: full_response}
                 else:
                     response_data = await response.json()
                     data = ReasoningResponse.model_validate(response_data)
