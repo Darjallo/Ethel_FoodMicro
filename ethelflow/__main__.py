@@ -4,19 +4,40 @@ from ethelflow.settings.postgres_settings import postgres_settings
 from ethelflow.data.models import EthelDocument
 from ethelflow.assets.s3 import s3_manager
 import uuid
+from contextlib import asynccontextmanager
+from psycopg_pool import AsyncConnectionPool
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 # from alembic.config import Config
 # from alembic import command
 
 from ethelflow.models import FlowRequest
-from ethelflow.handler import handler, handler_stream
+from ethelflow.handler import handler
 
 import sys
 import importlib
 
 from uuid import UUID
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    async with AsyncPostgresSaver.from_conn_string(
+        postgres_settings.db_url
+    ) as checkpointer:
+        await checkpointer.setup()
+        print("Checkpointer setup complete.")
+
+    pool = AsyncConnectionPool(conninfo=postgres_settings.db_url, open=False)
+    await pool.open()
+    checkpointer = AsyncPostgresSaver(pool)
+    app.state.checkpointer = checkpointer
+    yield
+
+    await pool.close()
+
+
+app = FastAPI(lifespan=lifespan)
 
 engine = create_engine(postgres_settings.url)
 
@@ -91,6 +112,7 @@ async def create_flow(flow_request: FlowRequest):
         flow_request.query,
         flow_request.file_id,
         flow_request.stream,
+        app.state.checkpointer,
     )
 
 

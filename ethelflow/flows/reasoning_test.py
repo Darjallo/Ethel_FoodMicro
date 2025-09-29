@@ -14,7 +14,7 @@ class ReasoningTestState(TypedDict, total=False):
     reasoning_response: str
 
 
-async def run(context=None, query=None, file_id=None, stream=False):
+async def run(context=None, query=None, file_id=None, stream=False, checkpointer=None):
     """
     Runs a test of the reasoning agent.
     """
@@ -65,12 +65,20 @@ async def run(context=None, query=None, file_id=None, stream=False):
     workflow.set_entry_point("reasoning")
     workflow.set_finish_point("reasoning")
 
-    # Compile the graph
-    app = workflow.compile()
+    app = workflow.compile(checkpointer=checkpointer)
+
+    # this is required for checkpointing, ideally should be passed from outside
+    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
     if stream:
-        async for item in app.astream_events(initial_state, version="v2"):
+        async for item in app.astream_events(initial_state, config, version="v2"):
             if item["event"] == "on_chain_stream":
-                yield item["data"]["chunk"]["reasoning_response"]
+                chunk = item["data"]["chunk"]
+                if (
+                    isinstance(chunk, dict)
+                    and "reasoning_response" in chunk
+                    and chunk["reasoning_response"] is not None
+                ):
+                    yield chunk["reasoning_response"]
     else:
-        yield await app.ainvoke(initial_state)
+        yield await app.ainvoke(initial_state, config)
