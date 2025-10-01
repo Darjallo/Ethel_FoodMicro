@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
+from fastapi.responses import StreamingResponse
 from sqlmodel import Session, create_engine
 from ethelflow.settings.postgres_settings import postgres_settings
 from ethelflow.data.models import EthelDocument
@@ -7,6 +8,7 @@ import uuid
 from contextlib import asynccontextmanager
 from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+import asyncio
 
 # from alembic.config import Config
 # from alembic import command
@@ -47,15 +49,19 @@ def get_session():
         yield session
 
 
-# an endpoint to get the "run" with a specific id (GET /run/{run_id})
+# get checkpoints for a given run_id (GET /flow/{run_id})
 @app.get("/flow/{run_id}")
-async def get_run(run_id: UUID):
-    # doc = runs.find_one({"_id": run_id}, projection={"state": False})
-    # if not doc:  # return 404 if run not found
-    #     raise HTTPException(status_code=404, detail="Run not found")
-
-    # return doc
-    return NotImplementedError("This endpoint is not implemented yet.")
+async def get_run(
+    run_id: UUID,
+    checkpointer: AsyncPostgresSaver = Depends(lambda: app.state.checkpointer),
+):
+    checkpoints = [
+        checkpoint
+        async for checkpoint in checkpointer.alist(
+            {"configurable": {"thread_id": str(run_id)}}
+        )
+    ]
+    return checkpoints
 
 
 # add a file to the etheldocuments table (POST /documents)
@@ -98,9 +104,9 @@ async def create_document(
 
 
 @app.post("/flow")
-async def create_flow(flow_request: FlowRequest):
+async def run_flow(flow_request: FlowRequest):
     """
-    Endpoint to create a flow execution request.
+    Endpoint to run a flow and return the results.
     """
     if flow_request.flow_reload:
         sys.modules.pop(f"ethelflow.flows.{flow_request.flow}", None)
@@ -114,6 +120,67 @@ async def create_flow(flow_request: FlowRequest):
         flow_request.stream,
         app.state.checkpointer,
     )
+
+
+@app.post("/flow/start")
+async def start_flow(flow_request: FlowRequest):
+    """
+    Endpoint to start a flow and return its ID.
+    The ID can later be used to attach to the flow and get updates.
+    """
+    if flow_request.flow_reload:
+        sys.modules.pop(f"ethelflow.flows.{flow_request.flow}", None)
+    mod = importlib.import_module(f"ethelflow.flows.{flow_request.flow}")
+    thread_id = uuid.uuid4()
+
+    async def run():
+        async for _ in mod.run(
+            thread_id=thread_id,
+            context=flow_request.context,
+            query=flow_request.query,
+            file_id=flow_request.file_id,
+            stream=True,
+            checkpointer=app.state.checkpointer,
+        ):
+            pass
+
+    asyncio.create_task(run())
+
+    return {"run_id": thread_id}
+
+
+@app.post("/flow/attach/{run_id}")
+async def attach(run_id: UUID, flow_request: FlowRequest):
+    """
+    Endpoint to attach to a running flow and get its updates.
+    # FIXME: currently this re-runs the flow from scratch, should instead attach to the existing run
+    """
+    if flow_request.flow_reload:
+        sys.modules.pop(f"ethelflow.flows.{flow_request.flow}", None)
+    mod = importlib.import_module(f"ethelflow.flows.{flow_request.flow}")
+
+    # async def event_generator():
+    #     async for update in mod.run(
+    #         thread_id=run_id,
+    #         context=flow_request.context,
+    #         query=flow_request.query,
+    #         file_id=flow_request.file_id,
+    #         stream=True,
+    #         checkpointer=app.state.checkpointer,
+    #     ):
+    #         yield f"data: {update}\n\n"
+
+    return await handler(
+        mod,
+        flow_request.context,
+        flow_request.query,
+        flow_request.file_id,
+        True,
+        app.state.checkpointer,
+        thread_id=run_id,
+    )
+
+    # return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":
