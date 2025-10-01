@@ -1,5 +1,6 @@
 from types import ModuleType
 from fastapi.responses import StreamingResponse
+import uuid
 
 
 async def handler(
@@ -9,11 +10,13 @@ async def handler(
     file_id: str,
     stream: bool,
     checkpointer=None,
+    thread_id: uuid.UUID = uuid.uuid4(),
 ):
     if stream:
 
         async def stream():
             async for update in mod.run(
+                thread_id=thread_id,
                 context=context,
                 query=query,
                 file_id=file_id,
@@ -25,6 +28,7 @@ async def handler(
         return StreamingResponse(stream(), media_type="application/json")
     else:
         gen = mod.run(
+            thread_id=thread_id,
             context=context,
             query=query,
             file_id=file_id,
