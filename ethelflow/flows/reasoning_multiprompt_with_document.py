@@ -16,7 +16,14 @@ class ReasoningTestState(TypedDict, total=False):
     response_2: str
 
 
-async def run(context=None, query=None, file_id=None, stream=False, checkpointer=None):
+async def run(
+    thread_id: uuid.UUID,
+    context=None,
+    query=None,
+    file_id=None,
+    stream=False,
+    checkpointer=None,
+):
     """
     Runs a test of the reasoning agent.
     """
@@ -92,7 +99,7 @@ async def run(context=None, query=None, file_id=None, stream=False, checkpointer
 
     # Compile the graph
     app = workflow.compile(checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    config = {"configurable": {"thread_id": str(thread_id)}}
 
     if stream:
         # We need some logic here to not return the same response twice, since the response

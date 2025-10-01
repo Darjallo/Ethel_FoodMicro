@@ -1,6 +1,7 @@
 from typing import Any, Dict, TypedDict, Optional
 from langgraph.graph import StateGraph
 from ethelflow.agents.executor.node_adapter import executor_node
+import uuid
 
 
 class ExecutorTestState(TypedDict, total=False):
@@ -11,7 +12,14 @@ class ExecutorTestState(TypedDict, total=False):
     execution_result: Optional[Dict[str, Any]]
 
 
-async def run(context=None, query=None, file_id=None, stream=False):
+async def run(
+    thread_id: uuid.UUID,
+    context=None,
+    query=None,
+    file_id=None,
+    stream=False,
+    checkpointer=None,
+):
     type = context.get("type")
     if type not in ["python", "maxima"]:
         raise ValueError(
@@ -47,11 +55,14 @@ async def run(context=None, query=None, file_id=None, stream=False):
     flow.set_finish_point("executor")
 
     # Compile the graph
-    app = flow.compile()
+    app = flow.compile(checkpointer=checkpointer)
+    config = {"configurable": {"thread_id": str(thread_id)}}
 
     if stream:
-        async for item in app.astream_events(initial_state, version="v2"):
+        async for item in app.astream_events(
+            initial_state, config=config, version="v2"
+        ):
             if item["event"] == "on_chain_stream":
                 yield item["data"]["chunk"]["reasoning_response"]
     else:
-        yield await app.ainvoke(initial_state)
+        yield await app.ainvoke(initial_state, config=config)

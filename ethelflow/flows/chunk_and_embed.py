@@ -2,6 +2,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from ethelflow.agents.chunk_text.node_adapter import chunk_text_node
 from ethelflow.agents.embedding.node_adapter import embedding_node
+import uuid
 
 
 class ChunkAndEmbedState(TypedDict):
@@ -10,7 +11,14 @@ class ChunkAndEmbedState(TypedDict):
     embeddings: dict
 
 
-async def run(context=None, stream=False, query=None, file_id=None):
+async def run(
+    thread_id: uuid.UUID,
+    context=None,
+    stream=False,
+    query=None,
+    file_id=None,
+    checkpointer=None,
+):
     state: ChunkAndEmbedState = {"text": context.get("text")}
     flow = StateGraph(ChunkAndEmbedState)
 
@@ -22,10 +30,11 @@ async def run(context=None, stream=False, query=None, file_id=None):
     flow.add_edge(START, "chunk")
     flow.add_edge("chunk", "embed")
     flow.add_edge("embed", END)
-    app = flow.compile()
+    app = flow.compile(checkpointer=checkpointer)
+    config = {"configurable": {"thread_id": str(thread_id)}}
 
     if stream:
-        async for item in app.astream(state):
+        async for item in app.astream(state, config=config):
             yield item
     else:
-        yield await app.ainvoke(state)
+        yield await app.ainvoke(state, config=config)
