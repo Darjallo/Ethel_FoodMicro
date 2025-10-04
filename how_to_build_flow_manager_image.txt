@@ -1,3 +1,0 @@
-python3 generate_flow_manager_dockerfile.py 
-sudo docker build -f flow_manager/Dockerfile -t flow_manager:latest .
-

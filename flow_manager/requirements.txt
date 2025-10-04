@@ -1,5 +1,0 @@
-langgraph
-pymongo
-fastapi
-pydantic
-uvicorn
