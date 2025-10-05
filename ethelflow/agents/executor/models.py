@@ -10,9 +10,10 @@ class ExecutionRequest(BaseModel):
     code_b64: str | None = None
     # expr is required if type is maxima
     expr: str | None = None
+    # streams the logs of the execution in real-time, if set to True
+    stream: bool | None = False
     # possible other fields:
     # command: controls the command to run in the container
-    # type: Python, R, Maxima, etc.
     # deadline: in seconds, for the execution
     # resources: CPU, memory limits, etc.
 
