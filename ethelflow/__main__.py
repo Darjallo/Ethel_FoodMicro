@@ -1,14 +1,16 @@
+from collections import defaultdict
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, create_engine
 from ethelflow.settings.postgres_settings import postgres_settings
 from ethelflow.data.models import EthelDocument
 from ethelflow.assets.s3 import s3_manager
-import uuid
 from contextlib import asynccontextmanager
 from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 import asyncio
+import uuid
+import json
 
 # from alembic.config import Config
 # from alembic import command
@@ -49,9 +51,9 @@ def get_session():
         yield session
 
 
-# get checkpoints for a given run_id (GET /flow/{run_id})
-@app.get("/flow/{run_id}")
-async def get_run(
+# get all checkpoints for a given thread ID
+@app.get("/flow/{run_id}/history")
+async def get_run_history(
     run_id: UUID,
     checkpointer: AsyncPostgresSaver = Depends(lambda: app.state.checkpointer),
 ):
@@ -62,6 +64,18 @@ async def get_run(
         )
     ]
     return checkpoints
+
+
+# get the latest checkpoint for a given thread ID
+@app.get("/flow/{run_id}/status")
+async def get_run_status(
+    run_id: UUID,
+    checkpointer: AsyncPostgresSaver = Depends(lambda: app.state.checkpointer),
+):
+    checkpoint = await checkpointer.aget_tuple(
+        {"configurable": {"thread_id": str(run_id)}}
+    )
+    return checkpoint
 
 
 # add a file to the etheldocuments table (POST /documents)
@@ -122,6 +136,11 @@ async def run_flow(flow_request: FlowRequest):
     )
 
 
+# Very basic in-memory asyncio queue to stream flow events via SSE
+# FIXME only works within a single instance, needs a distributed queue like Redis for multiple instances
+flow_streams = defaultdict(asyncio.Queue)
+
+
 @app.post("/flow/start")
 async def start_flow(flow_request: FlowRequest):
     """
@@ -134,7 +153,9 @@ async def start_flow(flow_request: FlowRequest):
     thread_id = uuid.uuid4()
 
     async def run():
-        async for _ in mod.run(
+        # emit SSE start event
+        flow_streams[thread_id].put("event: start\n data: {}\n\n")
+        async for event in mod.run(
             thread_id=thread_id,
             context=flow_request.context,
             query=flow_request.query,
@@ -142,45 +163,35 @@ async def start_flow(flow_request: FlowRequest):
             stream=True,
             checkpointer=app.state.checkpointer,
         ):
-            pass
+            await flow_streams[thread_id].put(event)
+        await flow_streams[thread_id].put(None)  # Signal completion
 
     asyncio.create_task(run())
 
     return {"run_id": thread_id}
 
 
-@app.post("/flow/attach/{run_id}")
-async def attach(run_id: UUID, flow_request: FlowRequest):
+@app.get("/flow/{run_id}/attach")
+async def attach(run_id: UUID):
     """
-    Endpoint to attach to a running flow and get its updates.
-    # FIXME: currently this re-runs the flow from scratch, should instead attach to the existing run
+    Endpoint to attach to a running flow and get its updates (SSE).
+    # FIXME This will only work for flows with streaming enabled. needs a check for that
+    # FIXME Currently, if the flow has already completed, this will hang forever. needs a timeout or a check for completion
     """
-    if flow_request.flow_reload:
-        sys.modules.pop(f"ethelflow.flows.{flow_request.flow}", None)
-    mod = importlib.import_module(f"ethelflow.flows.{flow_request.flow}")
 
-    # async def event_generator():
-    #     async for update in mod.run(
-    #         thread_id=run_id,
-    #         context=flow_request.context,
-    #         query=flow_request.query,
-    #         file_id=flow_request.file_id,
-    #         stream=True,
-    #         checkpointer=app.state.checkpointer,
-    #     ):
-    #         yield f"data: {update}\n\n"
+    queue = flow_streams.get(run_id)
+    if queue is None:
+        raise HTTPException(status_code=404, detail="Run ID not found")
 
-    return await handler(
-        mod,
-        flow_request.context,
-        flow_request.query,
-        flow_request.file_id,
-        True,
-        app.state.checkpointer,
-        thread_id=run_id,
-    )
+    async def event_stream():
+        while True:
+            event = await queue.get()
+            if event is None:
+                yield "event: complete\n data: {}\n\n"
+                break
+            yield f"event: stream\n data: {json.dumps(event)}\n\n"
 
-    # return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":
