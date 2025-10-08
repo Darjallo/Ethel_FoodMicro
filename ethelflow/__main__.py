@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, create_engine
@@ -8,20 +9,25 @@ from ethelflow.assets.s3 import s3_manager
 from contextlib import asynccontextmanager
 from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.types import Command
+from langgraph.checkpoint.base import CheckpointTuple
 import asyncio
 import uuid
 import json
+import logging
 
 # from alembic.config import Config
 # from alembic import command
 
-from ethelflow.models import FlowRequest
+from ethelflow.models import FlowRequest, FlowContinueRequest
 from ethelflow.handler import handler
 
 import sys
 import importlib
 
 from uuid import UUID
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @asynccontextmanager
@@ -30,7 +36,7 @@ async def lifespan(_: FastAPI):
         postgres_settings.db_url
     ) as checkpointer:
         await checkpointer.setup()
-        print("Checkpointer setup complete.")
+        logger.info("Checkpointer setup complete.")
 
     pool = AsyncConnectionPool(conninfo=postgres_settings.db_url, open=False)
     await pool.open()
@@ -57,8 +63,9 @@ async def get_run_history(
     run_id: UUID,
     checkpointer: AsyncPostgresSaver = Depends(lambda: app.state.checkpointer),
 ):
+    logger.info(f"Fetching history for run_id: {run_id}")
     checkpoints = [
-        checkpoint
+        checkpoint._asdict()
         async for checkpoint in checkpointer.alist(
             {"configurable": {"thread_id": str(run_id)}}
         )
@@ -72,10 +79,44 @@ async def get_run_status(
     run_id: UUID,
     checkpointer: AsyncPostgresSaver = Depends(lambda: app.state.checkpointer),
 ):
+    logger.info(f"Fetching status for run_id: {run_id}")
     checkpoint = await checkpointer.aget_tuple(
         {"configurable": {"thread_id": str(run_id)}}
     )
-    return checkpoint
+    return checkpoint._asdict()
+
+
+# Continue a flow that has been interrupted and waiting for user input
+@app.post("/flow/{run_id}/continue")
+async def continue_flow(
+    run_id: UUID,
+    continue_request: FlowContinueRequest,
+    checkpointer: AsyncPostgresSaver = Depends(lambda: app.state.checkpointer),
+):
+    checkpoint: CheckpointTuple = await checkpointer.aget_tuple(
+        {"configurable": {"thread_id": str(run_id)}}
+    )
+    if checkpoint is None:
+        raise HTTPException(status_code=404, detail="Run ID not found")
+
+    # Restore state from the checkpoint
+    context = checkpoint.checkpoint.get("channel_values")
+
+    # Retrieve the compiled graph with the flow name from the metadata
+    mod = importlib.import_module(f"ethelflow.flows.{checkpoint.metadata.get('flow')}")
+    logger.info(
+        f"Continuing flow {checkpoint.metadata.get('flow')} for run_id: {run_id}"
+    )
+
+    command = Command(resume=continue_request.data)
+    return await handler(
+        mod=mod,
+        context=context,
+        stream=continue_request.stream,
+        checkpointer=app.state.checkpointer,
+        thread_id=run_id,
+        command=command,
+    )
 
 
 # add a file to the etheldocuments table (POST /documents)
@@ -122,17 +163,18 @@ async def run_flow(flow_request: FlowRequest):
     """
     Endpoint to run a flow and return the results.
     """
-    if flow_request.flow_reload:
-        sys.modules.pop(f"ethelflow.flows.{flow_request.flow}", None)
     mod = importlib.import_module(f"ethelflow.flows.{flow_request.flow}")
 
+    thread_id = uuid.uuid4()
+    logger.info(f"Starting flow {flow_request.flow} with run_id: {thread_id}")
+
     return await handler(
-        mod,
-        flow_request.context,
-        flow_request.query,
-        flow_request.file_id,
-        flow_request.stream,
-        app.state.checkpointer,
+        mod=mod,
+        context=flow_request.context,
+        stream=flow_request.stream,
+        checkpointer=app.state.checkpointer,
+        thread_id=thread_id,
+        command=None,
     )
 
 
@@ -147,8 +189,6 @@ async def start_flow(flow_request: FlowRequest):
     Endpoint to start a flow and return its ID.
     The ID can later be used to attach to the flow and get updates.
     """
-    if flow_request.flow_reload:
-        sys.modules.pop(f"ethelflow.flows.{flow_request.flow}", None)
     mod = importlib.import_module(f"ethelflow.flows.{flow_request.flow}")
     thread_id = uuid.uuid4()
 
@@ -158,8 +198,6 @@ async def start_flow(flow_request: FlowRequest):
         async for event in mod.run(
             thread_id=thread_id,
             context=flow_request.context,
-            query=flow_request.query,
-            file_id=flow_request.file_id,
             stream=True,
             checkpointer=app.state.checkpointer,
         ):

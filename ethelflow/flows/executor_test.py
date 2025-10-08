@@ -15,10 +15,9 @@ class ExecutorTestState(TypedDict, total=False):
 async def run(
     thread_id: uuid.UUID,
     context=None,
-    query=None,
-    file_id=None,
     stream=False,
     checkpointer=None,
+    command=None,
 ):
     type = context.get("type")
     if type not in ["python", "maxima"]:

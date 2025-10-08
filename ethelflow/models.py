@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field, field_validator
 from importlib.util import find_spec
+from typing import Any
+from uuid import UUID
 
 
 class FlowRequest(BaseModel):
@@ -12,16 +14,7 @@ class FlowRequest(BaseModel):
     context: dict = Field(
         default_factory=dict, description="Context data for the flow execution"
     )
-    flow_reload: bool = Field(
-        False, description="Whether to reload the flow module before execution"
-    )
     stream: bool = Field(False, description="Whether to stream the response")
-    query: dict = Field(
-        default_factory=dict, description="Query parameters for the flow execution"
-    )
-    file_id: str | None = Field(
-        None, description="Optional file identifier for the flow execution"
-    )
 
     @field_validator("flow")
     @classmethod
@@ -32,3 +25,17 @@ class FlowRequest(BaseModel):
         if not v or not find_spec(f"ethelflow.flows.{v}"):
             raise ValueError(f"No such flow '{v}'")
         return v
+
+
+class FlowContinueRequest(BaseModel):
+    """
+    Represents a request to continue a LangGraph flow that has been interrupted.
+    The continuation request must include a list of mappings from interrupt IDs to values.
+    """
+
+    data: dict[str, Any] = Field(
+        ..., description="Mapping from interrupt IDs to values"
+    )
+    stream: bool = Field(False, description="Whether to stream the response")
+
+    # TODO: validate that the interrupt IDs are valid UUIDs

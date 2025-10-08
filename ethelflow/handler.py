@@ -1,15 +1,15 @@
 from types import ModuleType
 from fastapi.responses import StreamingResponse
+from langgraph.types import Command, Checkpointer
 import uuid
 
 
 async def handler(
     mod: ModuleType,
     context: dict,
-    query: dict,
-    file_id: str,
     stream: bool,
-    checkpointer=None,
+    checkpointer: Checkpointer | None = None,
+    command: Command | None = None,
     thread_id: uuid.UUID = uuid.uuid4(),
 ):
     if stream:
@@ -18,8 +18,7 @@ async def handler(
             async for update in mod.run(
                 thread_id=thread_id,
                 context=context,
-                query=query,
-                file_id=file_id,
+                command=command,
                 stream=True,
                 checkpointer=checkpointer,
             ):
@@ -30,8 +29,7 @@ async def handler(
         gen = mod.run(
             thread_id=thread_id,
             context=context,
-            query=query,
-            file_id=file_id,
+            command=command,
             stream=False,
             checkpointer=checkpointer,
         )

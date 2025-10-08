@@ -8,6 +8,7 @@ app = FastAPI()
 
 @app.post("/chunk_text")
 async def chunk_text(req: ChunkingRequest):
+    # XXX: consider using .from_tiktok_encoder() if we want to chunk by tokens
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=req.chunk_size,
         chunk_overlap=req.chunk_overlap,

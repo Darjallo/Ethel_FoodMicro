@@ -15,9 +15,8 @@ async def run(
     thread_id: uuid.UUID,
     context=None,
     stream=False,
-    query=None,
-    file_id=None,
     checkpointer=None,
+    command=None,
 ):
     state: ChunkAndEmbedState = {"text": context.get("text")}
     flow = StateGraph(ChunkAndEmbedState)

@@ -38,7 +38,7 @@ def chunk_text_node(
 
         # 2) Build payload and POST to the running chunk_text agent
         request: ChunkingRequest = ChunkingRequest(
-            text=input_text, chunk_size=40, chunk_overlap=20
+            text=input_text, chunk_size=500, chunk_overlap=50
         )
 
         async with aiohttp.ClientSession() as session:

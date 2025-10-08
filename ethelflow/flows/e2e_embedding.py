@@ -37,7 +37,13 @@ def prepare_for_store_vectors(state: E2EEmbeddingState) -> E2EEmbeddingState:
     return state
 
 
-async def run(context=None, stream=False, query=None, file_id=None):
+async def run(
+    thread_id: uuid.UUID,
+    context=None,
+    stream=False,
+    checkpointer=None,
+    command=None,
+):
     initial_state: E2EEmbeddingState = {
         "document_id": context.get("document_id"),
         "method": "dummy",  # Or get from context if needed
@@ -80,10 +86,11 @@ async def run(context=None, stream=False, query=None, file_id=None):
     # workflow.add_edge("store_vectors", END)
 
     # Compile the graph
-    app = workflow.compile()
+    app = workflow.compile(checkpointer=checkpointer)
+    config = {"configurable": {"thread_id": str(thread_id)}}
 
     if stream:
-        async for item in app.astream(initial_state):
+        async for item in app.astream(initial_state, config=config):
             yield item
     else:
-        yield await app.ainvoke(initial_state)
+        yield await app.ainvoke(initial_state, config=config)

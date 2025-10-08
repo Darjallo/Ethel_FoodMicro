@@ -1,7 +1,11 @@
 from typing import TypedDict, Optional
 import uuid
+import os
 from langgraph.graph import StateGraph
 from ethelflow.agents.reasoning.node_adapter import reasoning_node
+
+# Flow name to add to the metadata of each run
+FLOW_NAME = os.path.splitext(os.path.basename(__file__))[0]
 
 
 class ReasoningTestState(TypedDict, total=False):
@@ -19,10 +23,9 @@ class ReasoningTestState(TypedDict, total=False):
 async def run(
     thread_id: uuid.UUID,
     context=None,
-    query=None,
-    file_id=None,
     stream=False,
     checkpointer=None,
+    command=None,
 ):
     """
     Runs a test of the reasoning agent.
@@ -99,7 +102,10 @@ async def run(
 
     # Compile the graph
     app = workflow.compile(checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": str(thread_id)}}
+    config = {
+        "metadata": {"flow": FLOW_NAME},
+        "configurable": {"thread_id": str(thread_id)},
+    }
 
     if stream:
         # We need some logic here to not return the same response twice, since the response
