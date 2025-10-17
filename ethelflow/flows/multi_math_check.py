@@ -1,10 +1,11 @@
-from typing import TypedDict, Dict, Any
+import uuid
+from typing import Any, Dict, TypedDict
+
 from langgraph.graph import StateGraph
 
 from ethelflow.agents.executor.models import ExecutionResult
 from ethelflow.agents.executor.node_adapter import executor_node
 from ethelflow.agents.reasoning.node_adapter import reasoning_node
-import uuid
 
 
 # ──────────── State schema ─────────────────────────────────────

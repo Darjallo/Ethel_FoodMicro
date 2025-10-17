@@ -1,8 +1,10 @@
+import uuid
 from typing import TypedDict
-from langgraph.graph import StateGraph, START, END
+
+from langgraph.graph import END, START, StateGraph
+
 from ethelflow.agents.chunk_text.node_adapter import chunk_text_node
 from ethelflow.agents.embedding.node_adapter import embedding_node
-import uuid
 
 
 class ChunkAndEmbedState(TypedDict):

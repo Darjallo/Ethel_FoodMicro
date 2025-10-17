@@ -1,11 +1,13 @@
-from typing import TypedDict, List
 import uuid
+from typing import List, TypedDict
+
 from langgraph.graph import StateGraph
-from ethelflow.agents.file_to_text.node_adapter import file_to_text_node
+
 from ethelflow.agents.chunk_text.node_adapter import chunk_text_node
+from ethelflow.agents.embedding.node_adapter import embedding_node
+from ethelflow.agents.file_to_text.node_adapter import file_to_text_node
 from ethelflow.agents.store_chunks.models import StoreChunksResponse
 from ethelflow.agents.store_chunks.node_adapter import store_chunks_node
-from ethelflow.agents.embedding.node_adapter import embedding_node
 from ethelflow.agents.store_vectors.node_adapter import store_vectors_node
 
 

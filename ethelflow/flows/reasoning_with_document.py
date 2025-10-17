@@ -1,6 +1,8 @@
-from typing import TypedDict, Optional
 import uuid
+from typing import Optional, TypedDict
+
 from langgraph.graph import StateGraph
+
 from ethelflow.agents.reasoning.node_adapter import reasoning_node
 
 

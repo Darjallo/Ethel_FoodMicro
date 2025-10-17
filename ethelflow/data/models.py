@@ -1,9 +1,10 @@
-from typing import Any, Optional, List
-from sqlmodel import SQLModel, Field, Relationship, Column
-from sqlalchemy.dialects.postgresql import UUID
-from pgvector.sqlalchemy import Vector
-import uuid
 import datetime
+import uuid
+from typing import List, Optional
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects.postgresql import UUID
+from sqlmodel import Column, Field, Relationship, SQLModel
 
 
 class EthelDocument(SQLModel, table=True):
