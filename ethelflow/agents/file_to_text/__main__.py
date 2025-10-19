@@ -26,9 +26,10 @@ async def file_to_text(req: FileToTextRequest, session: Session = Depends(get_se
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if document.content_type != "application/pdf":
+    if document.content_type not in ["application/pdf", "text/plain", "text/html"]:
         raise HTTPException(
-            status_code=400, detail="Only PDF files are supported at the moment."
+            status_code=400,
+            detail=f"Unsupported content type: {document.content_type}",
         )
 
     try:
@@ -36,10 +37,13 @@ async def file_to_text(req: FileToTextRequest, session: Session = Depends(get_se
         s3_manager.download_file(str(document.id), file_object)
         file_object.seek(0)
 
-        reader = PdfReader(file_object)
         text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
+        if document.content_type == "application/pdf":
+            reader = PdfReader(file_object)
+            for page in reader.pages:
+                text += page.extract_text() or ""
+        elif document.content_type in ["text/plain", "text/html"]:
+            text = file_object.read().decode("utf-8")
 
         return FileToTextResponse(text=text)
     except Exception as e:
