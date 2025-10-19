@@ -60,7 +60,7 @@ async def continue_flow(
     )
 
 
-@router.post("/")
+@router.post("")
 async def run_flow(flow_request: FlowRequest, checkpointer=Depends(get_checkpointer)):
     """
     Endpoint to run a flow and return the results.

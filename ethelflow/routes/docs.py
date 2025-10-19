@@ -1,6 +1,8 @@
 import logging
 import uuid
+from io import BytesIO
 
+import magic
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, create_engine
 
@@ -20,25 +22,28 @@ def get_session():
         yield session
 
 
-# add a file to the etheldocuments table (POST /documents)
+# add a file to the etheldocuments table (POST /docs)
 # example curl command (file name url-encoded):
 # curl -X POST "http://localhost:8080/docs?title=Applied%20Security%20Lab%202023" -F "file=@asl-book-as2023.pdf"
-@router.post("/")
+@router.post("")
 async def create_document(
     title: str,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
 ):
+    data = BytesIO(await file.read())
     object_name = str(uuid.uuid4())
+
+    mime = magic.Magic(mime=True)
+    content_type = mime.from_buffer(data.getvalue())
     try:
-        s3_manager.upload_file(file.file, object_name)
+        s3_manager.upload_file(data, object_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload asset: {e}")
 
+    # save the document to DB
     try:
-        document = EthelDocument(
-            id=object_name, title=title, content_type=file.content_type
-        )
+        document = EthelDocument(id=object_name, title=title, content_type=content_type)
         session.add(document)
         session.commit()
         session.refresh(document)
