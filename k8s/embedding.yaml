@@ -18,10 +18,13 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "ethelflow.agents.embedding"]
           env:
-            - name: ETHELFLOW_EMBEDDING_API_KEY                
-              value: <your-azure-api-key>
             - name: ETHELFLOW_EMBEDDING_AZURE_ENDPOINT
-              value: <your-azure-endpoint>
+              value: https://cog-openai-ethel.openai.azure.com/
+            - name: ETHELFLOW_EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: azure-openai-secrets
+                  key: api_key
 
 ---
 apiVersion: v1

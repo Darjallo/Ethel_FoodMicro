@@ -14,11 +14,13 @@ Use `uv` for managing the project Python virtual environment.
 - You have container runtime (e.g. Docker) installed and running
 - You have a local Kubernetes cluster (Docker Desktop, minikube, microk8s, etc. should all work fine)
 - Ensure that you can access your Kubernetes cluster with `kubectl`
-- Ensure you have the Azure OpenAI service credentials and replace them with the placeholders in `k8s/embedding.yaml` and `k8s/reasoning.yaml`
+- You have the Azure OpenAI key (see below)
 
 ### Deployment
 
 You need to build the container image first, from the root of this repository, run `docker build -f ethelflow.Dockerfile -t ethelflow:latest .`
+
+You also need to have the Azure OpenAI key. With the key, run: `./scripts/make_azure_openai_secret.sh <secret-value>` to create the K8s secret manifest containing the API key.
 
 Using `kubectl` pointed to your local cluster, run `kubectl apply -f k8s/` from the root of this repository. This should create the following resources:
 

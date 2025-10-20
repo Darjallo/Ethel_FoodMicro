@@ -26,10 +26,13 @@ spec:
               value: minio123
             - name: ETHELFLOW_S3_BUCKET_NAME
               value: ethel
-            - name: ETHELFLOW_EMBEDDING_API_KEY                
-              value: <your-azure-api-key>
-            - name: ETHELFLOW_EMBEDDING_AZURE_ENDPOINT
-              value: <your-azure-endpoint>
+            - name: ETHELFLOW_REASONING_AZURE_ENDPOINT
+              value: https://cog-openai-ethel.openai.azure.com/
+            - name: ETHELFLOW_REASONING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: azure-openai-secrets
+                  key: api_key
 
 ---
 apiVersion: v1
