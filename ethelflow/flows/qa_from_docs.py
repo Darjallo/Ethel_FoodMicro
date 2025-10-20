@@ -33,6 +33,7 @@ class QAState(TypedDict, total=False):
     prompt: str
     answer: str
     top_k: int
+    threshold: float
 
 
 async def run(
@@ -53,11 +54,12 @@ async def run(
 
         question = context.get("question")
         top_k = context.get("top_k", 10)
+        threshold = context.get("threshold", 0.4)
         if not isinstance(question, str):
             raise ValueError("Missing or invalid 'question' in context")
 
         initial_state: QAState = {
-            "deployment": "Ethel_o4_mini",
+            "deployment": "Ethel_5",
             "question": [question],
             "top_k": top_k,
         }
@@ -83,7 +85,10 @@ async def run(
 
         with Session(engine) as session:
             chunks = get_relevant_chunks(
-                session=session, query_vector=embedding, top_k=top_k
+                session=session,
+                query_vector=embedding,
+                top_k=top_k,
+                distance_threshold=threshold,
             )
 
         # Construct the prompt with the retrieved chunks
