@@ -1,17 +1,31 @@
-from fastapi import FastAPI, Depends, HTTPException
-from sqlmodel import Session, select, create_engine
+import io
+from typing import AsyncGenerator
+
+from fastapi import Depends, FastAPI, HTTPException
+from pypdf import PdfReader
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import select
+
 from ethelflow.agents.file_to_text.models import FileToTextRequest, FileToTextResponse
+from ethelflow.assets.s3 import s3_manager
 from ethelflow.data.models import EthelDocument
 from ethelflow.settings.postgres_settings import postgres_settings
-from ethelflow.assets.s3 import s3_manager
-from pypdf import PdfReader
-import io
 
-engine = create_engine(postgres_settings.url)
+AsyncSessionLocal: sessionmaker[AsyncSession] = sessionmaker(
+    create_async_engine(
+        postgres_settings.async_url,
+        pool_size=20,
+        max_overflow=20,
+    ),
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
 
 
-def get_session():
-    with Session(engine) as session:
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
         yield session
 
 
@@ -19,9 +33,11 @@ app = FastAPI()
 
 
 @app.post("/file_to_text", response_model=FileToTextResponse)
-async def file_to_text(req: FileToTextRequest, session: Session = Depends(get_session)):
+async def file_to_text(
+    req: FileToTextRequest, session: AsyncSession = Depends(get_session)
+):
     statement = select(EthelDocument).where(EthelDocument.id == req.document_id)
-    document = session.exec(statement).one_or_none()
+    document = (await session.execute(statement)).scalars().one_or_none()
 
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")

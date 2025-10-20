@@ -1,5 +1,10 @@
-from fastapi import FastAPI, Depends
-from sqlmodel import create_engine, Session, select
+from typing import AsyncGenerator
+
+from fastapi import Depends, FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import select
+
 from ethelflow.agents.store_vectors.models import (
     StoreVectorsRequest,
     StoreVectorsResponse,
@@ -7,11 +12,20 @@ from ethelflow.agents.store_vectors.models import (
 from ethelflow.data.models import EmbeddingModel, TextEmbedding3LargeEmbedding
 from ethelflow.settings.postgres_settings import postgres_settings
 
-engine = create_engine(postgres_settings.url)
+AsyncSessionLocal: sessionmaker[AsyncSession] = sessionmaker(
+    create_async_engine(
+        postgres_settings.async_url,
+        pool_size=20,
+        max_overflow=20,
+    ),
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
 
 
-def get_session():
-    with Session(engine) as session:
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
         yield session
 
 
@@ -20,11 +34,11 @@ app = FastAPI()
 
 @app.post("/store_vectors", response_model=StoreVectorsResponse)
 async def store_vectors(
-    req: StoreVectorsRequest, session: Session = Depends(get_session)
+    req: StoreVectorsRequest, session: AsyncSession = Depends(get_session)
 ):
     try:
         statement = select(EmbeddingModel).where(EmbeddingModel.name == req.model_name)
-        embedding_model = session.exec(statement).one_or_none()
+        embedding_model = (await session.execute(statement)).scalars().one_or_none()
 
         if not embedding_model:
             return StoreVectorsResponse(
@@ -47,15 +61,17 @@ async def store_vectors(
             )
 
         session.add_all(new_embeddings)
-        session.commit()
+        await session.commit()
 
         return StoreVectorsResponse(
             success=True, num_vectors_stored=len(new_embeddings)
         )
 
     except Exception as e:
-        session.rollback()
-        return StoreVectorsResponse(success=False, message=str(e), num_vectors_stored=0)
+        await session.rollback()
+        raise e
+
+        # return StoreVectorsResponse(success=False, message=str(e), num_vectors_stored=0)
 
 
 if __name__ == "__main__":
