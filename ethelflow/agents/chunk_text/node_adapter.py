@@ -55,7 +55,6 @@ def chunk_text_node(
 
         # 3) Extract the “chunks” list (or empty list if missing)
         chunks_list = data.chunks or []
-        print("Chunked text:", chunks_list)
         yield {output_key: chunks_list}
 
     return node
