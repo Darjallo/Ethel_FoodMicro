@@ -99,7 +99,7 @@ async def start_flow(
 
     async def run():
         # emit SSE start event
-        flow_streams[thread_id].put("event: start\n data: {}\n\n")
+        await flow_streams[thread_id].put("event: start\n data: {}\n\n")
         async for event in mod.run(
             thread_id=thread_id,
             context=flow_request.context,
