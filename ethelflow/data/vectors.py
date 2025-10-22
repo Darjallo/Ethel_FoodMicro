@@ -28,6 +28,7 @@ def get_relevant_chunks(
     query_vector: list[float],
     top_k: int = 10,
     distance_threshold: float = 0.4,
+    method=None,
 ):
     query_vec_expr = cast(query_vector, Vector(3072))
     distance = func.cosine_distance(
@@ -35,7 +36,7 @@ def get_relevant_chunks(
     ).label("distance")
 
     logger.info(
-        f"Querying for relevant chunks, top_k={top_k}, distance_threshold={distance_threshold}"
+        f"Querying for relevant chunks, top_k={top_k}, distance_threshold={distance_threshold}, method={method}"
     )
 
     stmt = (
@@ -47,6 +48,9 @@ def get_relevant_chunks(
         .order_by(distance)
         .limit(top_k)
     )
+
+    if method:
+        stmt = stmt.where(ChunkSet.method == method)
 
     rows = session.exec(stmt).all()
 
