@@ -168,6 +168,10 @@ attrs==25.3.0 \
     --hash=sha256:427318ce031701fea540783410126f03899a97ffc6f61596ad581ac2e40e3bc3 \
     --hash=sha256:75d7cefc7fb576747b2c81b4442d4d4a1ce0900973527c011d1030fd3bf4af1b
     # via aiohttp
+beautifulsoup4==4.14.2 \
+    --hash=sha256:2a98ab9f944a11acee9cc848508ec28d9228abfd522ef0fad6a02a72e0ded69e \
+    --hash=sha256:5ef6fa3a8cbece8488d66985560f97ed091e22bbc4e9c2338508a9d5de6d4515
+    # via -r requirements.txt
 boto3==1.40.21 \
     --hash=sha256:3772fb828864d3b7046c8bdf2f4860aaca4a79f25b7b060206c6a5f4944ea7f9 \
     --hash=sha256:876ccc0b25517b992bd27976282510773a11ebc771aa5b836a238ea426c82187
@@ -1450,6 +1454,10 @@ sniffio==1.3.1 \
     # via
     #   anyio
     #   openai
+soupsieve==2.8 \
+    --hash=sha256:0cc76456a30e20f5d7f2e14a98a4ae2ee4e5abdc7c5ea0aafe795f344bc7984c \
+    --hash=sha256:e2dd4a40a628cb5f28f6d4b0db8800b8f581b65bb380b97de22ba5ca8d72572f
+    # via beautifulsoup4
 sqlalchemy==2.0.41 \
     --hash=sha256:023b3ee6169969beea3bb72312e44d8b7c27c75b347942d943cf49397b7edeb5 \
     --hash=sha256:03968a349db483936c249f4d9cd14ff2c296adfa1290b660ba6516f973139582 \
@@ -1536,6 +1544,7 @@ typing-extensions==4.14.0 \
     --hash=sha256:a1514509136dd0b477638fc68d6a91497af5076466ad0fa6c338e44e359944af
     # via
     #   alembic
+    #   beautifulsoup4
     #   fastapi
     #   langchain-core
     #   openai
