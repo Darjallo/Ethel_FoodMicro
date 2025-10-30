@@ -34,7 +34,9 @@ class ChunkSet(SQLModel, table=True):
         default_factory=uuid.uuid4,
         sa_column=Column(UUID(as_uuid=True), primary_key=True),
     )
-    document_id: uuid.UUID = Field(foreign_key="etheldocuments.id", nullable=False)
+    document_id: uuid.UUID = Field(
+        foreign_key="etheldocuments.id", nullable=False, index=True
+    )
     method: str  # e.g. "sliding_window_500"
     created_at: Optional[str] = Field(default=None)
 
@@ -52,7 +54,7 @@ class Chunk(SQLModel, table=True):
         sa_column=Column(UUID(as_uuid=True), primary_key=True),
     )
     chunk_set_id: uuid.UUID = Field(
-        foreign_key="chunksets.id", nullable=False, ondelete="CASCADE"
+        foreign_key="chunksets.id", nullable=False, index=True, ondelete="CASCADE"
     )
     text: str
     position: int
@@ -80,7 +82,7 @@ class TextEmbedding3LargeEmbedding(SQLModel, table=True):
         sa_column=Column(UUID(as_uuid=True), primary_key=True),
     )
     chunk_id: uuid.UUID = Field(
-        foreign_key="chunks.id", nullable=False, ondelete="CASCADE"
+        foreign_key="chunks.id", nullable=False, index=True, ondelete="CASCADE"
     )
     vector: List[float] = Field(
         sa_column=Column(Vector(3072))
@@ -125,3 +127,30 @@ class TextEmbedding3LargeEmbedding(SQLModel, table=True):
 #     documents: List[EthelDocument] = Relationship(
 #         back_populates="courses", link_model=DocumentCourseLink
 #     )
+
+
+# class Course(SQLModel, table=True):
+#     __tablename__ = "ethelcourses"
+
+#     id: uuid.UUID = Field(
+#         default_factory=uuid.uuid4,
+#         sa_column=Column(UUID(as_uuid=True), primary_key=True),
+#     )
+#     name: str
+#     created_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
+
+
+# class DocumentCourseLink(SQLModel, table=True):
+#     __tablename__ = "document_course_links"
+
+#     document_id: uuid.UUID = Field(foreign_key="etheldocuments.id", primary_key=True)
+#     course_id: uuid.UUID = Field(foreign_key="ethelcourses.id", primary_key=True)
+#     visible_after: datetime.datetime = Field(
+#         default_factory=datetime.datetime.now,
+#         nullable=False,
+#         description="Document becomes visible to this course after this time",
+#     )
+
+#     # optional: backrefs
+#     document: EthelDocument = Relationship(back_populates="course_links")
+#     course: Course = Relationship(back_populates="document_links")
