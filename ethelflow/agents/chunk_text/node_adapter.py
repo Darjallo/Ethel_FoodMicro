@@ -27,6 +27,8 @@ CHUNK_TEXT_URL: str = "http://chunk-text.default.svc:8000/chunk_text"
 def chunk_text_node(
     input_text_key: str = "text",
     output_key: str = "texts",
+    chunk_size: int = 500,
+    chunk_overlap: int = 50,
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         # 1) Fetch raw text from state
@@ -38,7 +40,7 @@ def chunk_text_node(
 
         # 2) Build payload and POST to the running chunk_text agent
         request: ChunkingRequest = ChunkingRequest(
-            text=input_text, chunk_size=500, chunk_overlap=50
+            text=input_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
 
         async with aiohttp.ClientSession() as session:

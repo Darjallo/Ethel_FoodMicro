@@ -1,7 +1,9 @@
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from ethelflow.agents.chunk_text.models import ChunkingRequest, ChunkingResponse
+from datetime import UTC, datetime
+
 from fastapi import FastAPI
-from datetime import datetime, UTC
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+from ethelflow.agents.chunk_text.models import ChunkingRequest, ChunkingResponse
 
 app = FastAPI()
 
