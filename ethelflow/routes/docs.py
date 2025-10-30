@@ -1,10 +1,12 @@
 import logging
 import uuid
 from io import BytesIO
+from typing import AsyncGenerator
 
 import magic
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlmodel import Session, create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 from ethelflow.assets.s3 import s3_manager
 from ethelflow.data.models import EthelDocument
@@ -14,11 +16,20 @@ logger = logging.getLogger("uvicorn.error")
 
 router = APIRouter(prefix="/docs", tags=["docs"])
 
-engine = create_engine(postgres_settings.url)
+AsyncSessionLocal: sessionmaker[AsyncSession] = sessionmaker(
+    create_async_engine(
+        postgres_settings.async_url,
+        pool_size=20,
+        max_overflow=20,
+    ),
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
 
 
-def get_session():
-    with Session(engine) as session:
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
         yield session
 
 
@@ -29,7 +40,7 @@ def get_session():
 async def create_document(
     title: str,
     file: UploadFile = File(...),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     data = BytesIO(await file.read())
     object_name = str(uuid.uuid4())
@@ -45,8 +56,8 @@ async def create_document(
     try:
         document = EthelDocument(id=object_name, title=title, content_type=content_type)
         session.add(document)
-        session.commit()
-        session.refresh(document)
+        await session.commit()
+        await session.refresh(document)
         return document
     except Exception as e:
         # If DB operation fails, try to clean up the orphaned S3 object.
@@ -54,11 +65,11 @@ async def create_document(
             s3_manager.delete_file(object_name)
         except Exception as asset_delete_error:
             # Log that cleanup failed, manual intervention might be needed.
-            print(
+            logger.error(
                 f"CRITICAL: Failed to delete orphaned S3 object {object_name} after DB error. Error: {asset_delete_error}"
             )
 
-        session.rollback()
+        await session.rollback()
         raise HTTPException(
             status_code=500, detail=f"Failed to create database record: {e}"
         )
