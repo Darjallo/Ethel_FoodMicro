@@ -1,6 +1,8 @@
+import asyncio
 import io
 from typing import AsyncGenerator
 
+from bs4 import BeautifulSoup
 from fastapi import Depends, FastAPI, HTTPException
 from pypdf import PdfReader
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -32,9 +34,23 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 app = FastAPI()
 
 
+def _html_to_text_sync(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    text = soup.get_text(separator="\n")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return "\n".join(lines)
+
+
+async def html_to_text(html: str) -> str:
+    return await asyncio.to_thread(_html_to_text_sync, html)
+
+
 @app.post("/file_to_text", response_model=FileToTextResponse)
 async def file_to_text(
-    req: FileToTextRequest, session: AsyncSession = Depends(get_session)
+    req: FileToTextRequest,
+    session: AsyncSession = Depends(get_session),
 ):
     statement = select(EthelDocument).where(EthelDocument.id == req.document_id)
     document = (await session.execute(statement)).scalars().one_or_none()
@@ -58,9 +74,11 @@ async def file_to_text(
             reader = PdfReader(file_object)
             for page in reader.pages:
                 text += page.extract_text() or ""
-        elif document.content_type in ["text/plain", "text/html"]:
+        elif document.content_type == "text/plain":
             text = file_object.read().decode("utf-8")
-
+        elif document.content_type == "text/html":
+            html = file_object.read().decode("utf-8")
+            text = await html_to_text(html)
         return FileToTextResponse(text=text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {e}")
