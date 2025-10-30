@@ -32,8 +32,10 @@ class QAState(TypedDict, total=False):
     question_embeddings: list[list[float]]
     prompt: str
     answer: str
+    method: str
     top_k: int
     threshold: float
+    stream: bool
 
 
 async def run(
@@ -55,6 +57,7 @@ async def run(
         question = context.get("question")
         top_k = context.get("top_k", 10)
         threshold = context.get("threshold", 0.4)
+        method = context.get("method", "recursive_char_500_50")
         if not isinstance(question, str):
             raise ValueError("Missing or invalid 'question' in context")
 
@@ -62,6 +65,7 @@ async def run(
             "deployment": "Ethel_5",
             "question": [question],
             "top_k": top_k,
+            "stream": stream,
         }
 
     workflow = StateGraph(QAState)
@@ -83,16 +87,24 @@ async def run(
 
         embedding = question_embeddings[0]
 
+        # XXX: should use an async session, probably a global one
         with Session(engine) as session:
             chunks = get_relevant_chunks(
                 session=session,
                 query_vector=embedding,
                 top_k=top_k,
                 distance_threshold=threshold,
+                method=method,
             )
 
         # Construct the prompt with the retrieved chunks
-        prompt = "Use the following context to answer the question:\n\n"
+        prompt = """
+        You are an helpful assistant tasked with answering user's questions based on the provided document excerpts.
+        Provide an accurate and extensive answer to the questions asked by the users. Explain open-ended questions in detail.
+        The excerpts are provided from a set of news articles from ETH Zürich, an university located in Switzerland. The excepts
+        may be in German or English.
+        Use the following context to answer the question:\n\n
+        """
         for chunk in chunks:
             prompt += chunk["text"] + "\n\n"
         prompt += "Question: " + state["question"][0]
@@ -106,7 +118,7 @@ async def run(
         reasoning_node(
             prompt_key="prompt",
             reasoning_effort_key=None,
-            stream_key=None,
+            stream_key="stream",
             output_key="answer",
         ),
     )
@@ -132,8 +144,19 @@ async def run(
             f"Resuming flow {FLOW_NAME} for run_id: {thread_id}, with command: {command}"
         )
     if stream:
+        reasoning_done = False
         async for event in app.astream_events(input, config=config, version="v2"):
-            yield str(event)
+            if (
+                event["event"] == "on_chain_stream"
+                and "chunk" in event["data"]
+                and "answer" in event["data"]["chunk"]
+            ):
+                if reasoning_done or event["data"]["chunk"]["answer"] is None:
+                    reasoning_done = True
+                    continue
+                yield event["data"]["chunk"]["answer"]
+        # async for event in app.astream_events(input, config=config, version="v2"):
+        #     yield str(event)
 
     else:
         yield await app.ainvoke(input, config=config)

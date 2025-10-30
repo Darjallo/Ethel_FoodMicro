@@ -48,14 +48,16 @@ async def run(
 ):
     initial_state: E2EEmbeddingState = {
         "document_id": context.get("document_id"),
-        "method": "dummy",  # Or get from context if needed
+        "method": "recursive_char_1000_100_htmlstrip",  # Or get from context if needed
     }
 
     workflow = StateGraph(E2EEmbeddingState)
 
     # Create instances of the nodes
     file_to_text = file_to_text_node()
-    chunk_text = chunk_text_node(input_text_key="text", output_key="chunks")
+    chunk_text = chunk_text_node(
+        input_text_key="text", output_key="chunks", chunk_size=1000, chunk_overlap=100
+    )
     store_chunks = store_chunks_node(
         document_id_key="document_id",
         chunks_key="chunks",
