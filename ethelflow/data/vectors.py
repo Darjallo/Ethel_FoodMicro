@@ -1,7 +1,8 @@
 import logging
 
 from pgvector.sqlalchemy import Vector
-from sqlmodel import Session, cast, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import cast, func, select
 
 from ethelflow.data.models import (
     Chunk,
@@ -12,19 +13,10 @@ from ethelflow.data.models import (
 
 logger = logging.getLogger("uvicorn.error")
 
-# def get_embeddings_by_chunk_ids(
-#     session: Session, chunk_ids: List[str]
-# ) -> List[TextEmbedding3LargeEmbedding]:
-#     statement = select(TextEmbedding3LargeEmbedding).where(
-#         TextEmbedding3LargeEmbedding.chunk_id.in_(chunk_ids)
-#     )
-#     results = session.exec(statement).all()
-#     return results
-
 
 # Retrieve the most relevant chunks based on a query vector
-def get_relevant_chunks(
-    session: Session,
+async def get_relevant_chunks(
+    session: AsyncSession,
     query_vector: list[float],
     top_k: int = 10,
     distance_threshold: float = 0.4,
@@ -52,7 +44,7 @@ def get_relevant_chunks(
     if method:
         stmt = stmt.where(ChunkSet.method == method)
 
-    rows = session.exec(stmt).all()
+    rows = (await session.execute(stmt)).all()
 
     logger.info(
         f"Found {len(rows)} relevant chunks, average distance: {sum(r.distance for r in rows) / len(rows) if rows else 0}"

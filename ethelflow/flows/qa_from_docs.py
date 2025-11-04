@@ -6,19 +6,11 @@ from typing import TypedDict
 from langgraph.graph import StateGraph
 from langgraph.pregel import Pregel
 from langgraph.types import Command
-from sqlmodel import Session, create_engine
 
 from ethelflow.agents.embedding.node_adapter import embedding_node
 from ethelflow.agents.reasoning.node_adapter import reasoning_node
-from ethelflow.settings.postgres_settings import postgres_settings
 
-engine = create_engine(postgres_settings.url)
-
-
-def get_session():
-    with Session(engine) as session:
-        yield session
-
+from ethelflow.data.db_utils import get_session_ctx
 
 # Flow name to add to the metadata of each run
 FLOW_NAME = os.path.splitext(os.path.basename(__file__))[0]
@@ -87,9 +79,8 @@ async def run(
 
         embedding = question_embeddings[0]
 
-        # XXX: should use an async session, probably a global one
-        with Session(engine) as session:
-            chunks = get_relevant_chunks(
+        async with get_session_ctx() as session:
+            chunks = await get_relevant_chunks(
                 session=session,
                 query_vector=embedding,
                 top_k=top_k,

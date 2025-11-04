@@ -1,31 +1,16 @@
-from typing import AsyncGenerator
+import logging
 
 from fastapi import Depends, FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ethelflow.agents.store_chunks.models import (
     StoreChunksRequest,
     StoreChunksResponse,
 )
+from ethelflow.data.db_utils import get_session
 from ethelflow.data.models import Chunk, ChunkSet
-from ethelflow.settings.postgres_settings import postgres_settings
 
-AsyncSessionLocal: sessionmaker[AsyncSession] = sessionmaker(
-    create_async_engine(
-        postgres_settings.async_url,
-        pool_size=20,
-        max_overflow=20,
-    ),
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-)
-
-
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionLocal() as session:
-        yield session
+logger = logging.getLogger("uvicorn.error")
 
 
 app = FastAPI()

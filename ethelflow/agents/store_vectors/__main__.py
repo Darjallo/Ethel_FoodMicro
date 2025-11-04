@@ -1,33 +1,13 @@
-from typing import AsyncGenerator
-
 from fastapi import Depends, FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from ethelflow.agents.store_vectors.models import (
     StoreVectorsRequest,
     StoreVectorsResponse,
 )
+from ethelflow.data.db_utils import get_session
 from ethelflow.data.models import EmbeddingModel, TextEmbedding3LargeEmbedding
-from ethelflow.settings.postgres_settings import postgres_settings
-
-AsyncSessionLocal: sessionmaker[AsyncSession] = sessionmaker(
-    create_async_engine(
-        postgres_settings.async_url,
-        pool_size=20,
-        max_overflow=20,
-    ),
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-)
-
-
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionLocal() as session:
-        yield session
-
 
 app = FastAPI()
 
