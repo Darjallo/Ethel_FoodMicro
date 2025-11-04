@@ -1,12 +1,14 @@
-from fastapi import FastAPI, Depends, Request
-from fastapi.responses import StreamingResponse
-from ethelflow.agents.reasoning.models import ReasoningRequest, ReasoningResponse
-from ethelflow.settings.reasoning_settings import settings as reasoning_settings
-from ethelflow.assets.s3 import s3_manager
-from openai import AsyncAzureOpenAI
-from contextlib import asynccontextmanager
-import io
 import base64
+import io
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import StreamingResponse
+from openai import AsyncAzureOpenAI
+
+from ethelflow.agents.reasoning.models import ReasoningRequest, ReasoningResponse
+from ethelflow.assets.s3 import s3_manager
+from ethelflow.settings.reasoning_settings import settings as reasoning_settings
 
 
 @asynccontextmanager
@@ -46,7 +48,7 @@ async def reasoning_with_document(
 ):
     # 1. Download the file from S3
     file_object = io.BytesIO()
-    s3_manager.download_file(str(req.document_id), file_object)
+    await s3_manager.download_file(str(req.document_id), file_object)
     file_object.seek(0)
     file_content = file_object.read()
 

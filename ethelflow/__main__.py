@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 
+from ethelflow.assets.s3 import s3_manager
 from ethelflow.routes.docs import router as docs_router
 from ethelflow.routes.flows import router as flows_router
 from ethelflow.settings.postgres_settings import postgres_settings
@@ -38,8 +39,10 @@ async def teardown_checkpointer():
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_checkpointer()
+    await s3_manager.init()
     yield
 
+    await s3_manager.close()
     await teardown_checkpointer()
 
 

@@ -48,7 +48,7 @@ async def create_document(
     mime = magic.Magic(mime=True)
     content_type = mime.from_buffer(data.getvalue())
     try:
-        s3_manager.upload_file(data, object_name)
+        await s3_manager.upload_file(data, object_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload asset: {e}")
 
@@ -62,7 +62,7 @@ async def create_document(
     except Exception as e:
         # If DB operation fails, try to clean up the orphaned S3 object.
         try:
-            s3_manager.delete_file(object_name)
+            await s3_manager.delete_file(object_name)
         except Exception as asset_delete_error:
             # Log that cleanup failed, manual intervention might be needed.
             logger.error(

@@ -66,7 +66,7 @@ async def file_to_text(
 
     try:
         file_object = io.BytesIO()
-        s3_manager.download_file(str(document.id), file_object)
+        await s3_manager.download_file(str(document.id), file_object)
         file_object.seek(0)
 
         text = ""
