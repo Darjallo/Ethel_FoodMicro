@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import UUID
-from sqlmodel import Column, Field, Relationship, SQLModel
+from sqlmodel import Column, Field, Relationship, SQLModel, Index, text
 
 
 class EthelDocument(SQLModel, table=True):
@@ -88,6 +88,38 @@ class TextEmbedding3LargeEmbedding(SQLModel, table=True):
         sa_column=Column(Vector(3072))
     )  # dimension fixed per model
     created_at: Optional[str] = Field(default=None)
+
+    __table_args__ = (
+        Index(
+            "embeddings_text_embedding_3_large_vector_idx",
+            text("(vector::halfvec(3072)) halfvec_cosine_ops"),
+            postgresql_using="hnsw",
+        ),
+    )
+
+
+class TextEmbedding3SmallEmbedding(SQLModel, table=True):
+    __tablename__ = "embeddings_text_embedding_3_small"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(UUID(as_uuid=True), primary_key=True),
+    )
+    chunk_id: uuid.UUID = Field(
+        foreign_key="chunks.id", nullable=False, index=True, ondelete="CASCADE"
+    )
+    vector: List[float] = Field(
+        sa_column=Column(Vector(1536))
+    )  # dimension fixed per model
+    created_at: Optional[str] = Field(default=None)
+
+    __table_args__ = (
+        Index(
+            "embeddings_text_embedding_3_small_vector_idx",
+            text("(vector::halfvec(1536)) halfvec_cosine_ops"),
+            postgresql_using="hnsw",
+        ),
+    )
 
 
 # class QwenMathEmbedding(SQLModel, table=True):
