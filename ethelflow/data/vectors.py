@@ -1,8 +1,8 @@
 import logging
 
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import cast, func, select
+from sqlmodel import SQLModel, cast, text, select, Float
 
 from ethelflow.data.models import (
     Chunk,
@@ -20,12 +20,18 @@ async def get_relevant_chunks(
     query_vector: list[float],
     top_k: int = 10,
     distance_threshold: float = 0.4,
+    embedding_model: SQLModel = TextEmbedding3LargeEmbedding,
+    ef_search: int = 100,
     method=None,
 ):
-    query_vec_expr = cast(query_vector, Vector(3072))
-    distance = func.cosine_distance(
-        TextEmbedding3LargeEmbedding.vector, query_vec_expr
-    ).label("distance")
+    # FIXME: vector length is hardcoded here, should be derived from the model
+    # we use the literal op "<=>" for cosine distance, otherwise Postgres doeesn't know that the index can be used
+    distance = (
+        cast(embedding_model.vector, HALFVEC(3072))
+        .op("<=>")(cast(query_vector, HALFVEC(3072)))
+        .cast(Float)
+        .label("distance")
+    )
 
     logger.info(
         f"Querying for relevant chunks, top_k={top_k}, distance_threshold={distance_threshold}, method={method}"
@@ -33,7 +39,8 @@ async def get_relevant_chunks(
 
     stmt = (
         select(Chunk.text, EthelDocument.title, distance)
-        .join(Chunk, Chunk.id == TextEmbedding3LargeEmbedding.chunk_id)
+        .select_from(embedding_model)
+        .join(Chunk, Chunk.id == embedding_model.chunk_id)
         .join(ChunkSet, ChunkSet.id == Chunk.chunk_set_id)
         .join(EthelDocument, EthelDocument.id == ChunkSet.document_id)
         .where(distance <= distance_threshold)
@@ -44,7 +51,9 @@ async def get_relevant_chunks(
     if method:
         stmt = stmt.where(ChunkSet.method == method)
 
-    rows = (await session.execute(stmt)).all()
+    async with session.begin():
+        await session.execute(text(f"SET LOCAL hnsw.ef_search = {ef_search}"))
+        rows = (await session.execute(stmt)).all()
 
     logger.info(
         f"Found {len(rows)} relevant chunks, average distance: {sum(r.distance for r in rows) / len(rows) if rows else 0}"
