@@ -50,6 +50,8 @@ async def run(
         top_k = context.get("top_k", 10)
         threshold = context.get("threshold", 0.4)
         method = context.get("method", "recursive_char_500_50")
+        retrieve_entire_docs = context.get("retrieve_entire_docs", False)
+        retrieve_entire_docs_hits = context.get("retrieve_entire_docs_hits", 2)
         if not isinstance(question, str):
             raise ValueError("Missing or invalid 'question' in context")
 
@@ -86,6 +88,8 @@ async def run(
                 top_k=top_k,
                 distance_threshold=threshold,
                 method=method,
+                retrieve_entire_docs=retrieve_entire_docs,
+                retrieve_entire_docs_hits=retrieve_entire_docs_hits,
             )
 
         # Construct the prompt with the retrieved chunks
