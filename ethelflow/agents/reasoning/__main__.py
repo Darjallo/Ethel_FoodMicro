@@ -19,7 +19,10 @@ async def lifespan(app: FastAPI):
         api_key=reasoning_settings.api_key,
     )
     app.state.client = client
+    await s3_manager.init()
+
     yield
+    await s3_manager.close()
     await client.close()
 
 
