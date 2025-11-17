@@ -17,8 +17,10 @@ from ethelflow.data.models import EthelDocument
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await s3_manager.init()
+
     yield
     await s3_manager.close()
+
 
 app = FastAPI(lifespan=lifespan)
 
