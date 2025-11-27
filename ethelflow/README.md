@@ -21,8 +21,6 @@
 
 # ETHEL Flow
 
----
-
 ## main.py
 
 ```py
@@ -63,8 +61,6 @@ We use a custom `__init_checkpointer()` function to set up global checkpointing 
 ### S3 Manager
 
 The `s3_manager` is initialized at startup and provides a shared interface for interacting with our S3-compatible storage. It handles tasks such as `uploading, downloading, and deleting assets`. By initializing it once and exposing it through the application, all routes and services can reliably access S3 without re-creating clients.
-
----
 
 ## routes/docs.py
 
@@ -170,8 +166,6 @@ async function uploadDocument() {
   });
 ```
 
----
-
 ## routes/flows.py
 
 This module defines all endpoints related to **LangGraph flows**, which represent the execution of AI agent graphs.
@@ -229,8 +223,6 @@ The module contains **six endpoints**: **three POST** and **three GET**:
 
   - **`GET /{run_id}/attach`** — this endpoint **does not** use the checkpointer.
     It streams live updates via SSE and does not need to read or restore checkpoints.
-
----
 
 # POST Endpoints
 
@@ -318,8 +310,6 @@ axios.post("/flow", {
 This operation does not require authentication
 </aside>
 
----
-
 ## 2. `POST /flow/start`
 
 Start a new flow run.
@@ -375,8 +365,6 @@ const res = await axios.post("/flow/start", {
 });
 const runId = res.data.run_id;
 ```
-
----
 
 ## 3. `POST /flow/{run_id}/continue`
 
@@ -457,8 +445,6 @@ axios.post(`/flow/${runId}/continue`, {
 This operation does not require authentication
 </aside>
 
----
-
 # GET Endpoints
 
 ## 4. `GET /flow/{run_id}/attach`
@@ -497,8 +483,6 @@ const sse = new EventSource(`/flow/${runId}/attach`);
 sse.onmessage = (e) => console.log(JSON.parse(e.data));
 ```
 
----
-
 ## 5. `GET /flow/{run_id}/history`
 
 Retrieve all checkpoints for a flow run.
@@ -534,8 +518,6 @@ This operation does not require authentication
 ```js
 axios.get(`/flow/${runId}/history`);
 ```
-
----
 
 ## 6. `GET /flow/{run_id}/status`
 
@@ -574,8 +556,6 @@ This operation does not require authentication
 ```js
 axios.get(`/flow/${runId}/status`);
 ```
-
----
 
 <a id="schemavalidationerror"></a>
 <a id="schema_ValidationError"></a>
@@ -625,8 +605,6 @@ continued
 | msg  | string | true     | none         | none        |
 | type | string | true     | none         | none        |
 
----
-
 # Handler
 
 This handler is used in **`/flow`** and **`/flow/{run_id}/continue`**.
@@ -642,8 +620,6 @@ Returns a `StreamingResponse` that streams all updates emitted by `mod.run(...)`
 
 Executes `mod.run(...)` and returns **the first output item** (or `{}` if none exists).
 
----
-
 ### Inputs
 
 | Name           | Type               | Required | Description                                             |
@@ -655,16 +631,12 @@ Executes `mod.run(...)` and returns **the first output item** (or `{}` if none e
 | `command`      | any                | no       | Continuation instruction when resuming a paused flow.   |
 | `thread_id`    | UUID               | no       | Flow run ID; required when continuing an existing flow. |
 
----
-
 ### Response
 
 | Mode          | Type                | Media Type         | Description                                                              |
 | ------------- | ------------------- | ------------------ | ------------------------------------------------------------------------ |
 | Streaming     | `StreamingResponse` | `application/json` | Streams all updates produced by the running flow.                        |
 | Non-streaming | JSON object         | `application/json` | Returns only the first output item from the flow (or `{}` if no output). |
-
----
 
 # Flows
 
@@ -673,8 +645,6 @@ Each file inside the `flows/` directory represents a self-contained flow module
 (e.g., chunk_and_embed.py, qa_from_docs.py, quiz.py).
 
 The API endpoints in `flows.py` invoke these modules in two ways:
-
----
 
 ### **Via the handler**
 
@@ -691,14 +661,10 @@ This is used for:
 
 Both support optional streaming and checkpointing.
 
----
-
 ### **Direct execution (no handler)**
 
 The `POST /flow/start` endpoint calls the flow **directly**, initializes a new run,
 and returns only the `run_id`.
-
----
 
 Each flow module defines:
 
@@ -725,8 +691,6 @@ You can jump to any category below:
 | **Reasoning**   | [`reasoning_multiprompt`](#1-reasoning_multiprompt-flow), [`reasoning_with_document`](#2-reasoning_with_document-flow), [`reasoning_multiprompt_with_document`](#3-reasoning_multiprompt_with_document-flow) | Single/multi-step reasoning with optional document context |
 | **QA (RAG)**    | [`qa_from_docs`](#qa_from_docs-flow)                                                                                                                                                                         | Retrieval + reasoning over document chunks                 |
 | **Interactive** | [`quiz`](#quiz-flow)                                                                                                                                                                                         | Multi-step reasoning with human input interrupts           |
-
----
 
 # `qa_from_docs` Flow
 
@@ -882,8 +846,6 @@ await app.ainvoke(input, config=config)
 
 formatted according to `QAState`.
 
----
-
 # `quiz` Flow
 
 ### **Purpose**
@@ -1033,8 +995,6 @@ await app.ainvoke(input, config=config)
 
 formatted according to `QuizState`.
 
----
-
 # Execution Flows
 
 The execution flows provide isolated code execution for Python and Maxima, and optionally compare results using a reasoning model. They rely on the **executor agent**, which runs code inside containerized environments and returns structured execution results.
@@ -1043,8 +1003,6 @@ There are **two** flows in this category:
 
 1. **`executor_test`** – single-backend execution (Python or Maxima)
 2. **`multi_math`** – evaluate one expression in both Python and Maxima and compare the outputs using an LLM
-
----
 
 ## 1. `executor_test` Flow
 
@@ -1107,8 +1065,6 @@ executor → END
 | `image`            | Execution container image                                |
 
 formatted according to `ExecutorTestState`.
-
----
 
 ## 2. `multi_math` Flow
 
@@ -1178,8 +1134,6 @@ norm → python ┐
 
 formatted according to `MultiMathState`.
 
----
-
 # Embedding Flows
 
 The embedding flows convert raw text or full documents into **vector embeddings** suitable for retrieval, search, and semantic indexing.
@@ -1189,8 +1143,6 @@ There are **two** flows in this category:
 
 1. **`chunk_and_embed`** – simple text → chunks → embeddings
 2. **`e2e_embedding`** – full document indexing pipeline (file → text → chunks → storage → embeddings → vector store)
-
----
 
 ## 1. `chunk_and_embed` Flow
 
@@ -1232,8 +1184,6 @@ START → chunk → embed → END
 | `embeddings` | Embedding vectors for each text chunk |
 
 formatted according to `ChunkAndEmbedState`.
-
----
 
 ## 2. `e2e_embedding` Flow
 
@@ -1304,8 +1254,6 @@ There are three flows in this category:
 2. **`reasoning_with_document`** – single-step document-aware reasoning
 3. **`reasoning_multiprompt_with_document`** – two-step chained reasoning with document grounding (optional to include)
 
----
-
 ## 1. `reasoning_multiprompt` Flow
 
 ### **Purpose**
@@ -1317,8 +1265,6 @@ Run **two consecutive reasoning steps**:
 
 This tests **chained reasoning**, prompt refinement, or back-and-forth reasoning patterns.
 
----
-
 ### **Overview**
 
 1. Validate `prompt_1`, `prompt_2`, `deployment`
@@ -1326,15 +1272,11 @@ This tests **chained reasoning**, prompt refinement, or back-and-forth reasoning
 3. Update `prompt_2 = response_1 + prompt_2`
 4. Call reasoning agent with updated `prompt_2` → `response_2`
 
----
-
 ### **Flow Structure**
 
 ```
 reasoning_1 → prepare_second_prompt → reasoning_2 → END
 ```
-
----
 
 ### **State (`ReasoningTestState`)**
 
@@ -1348,8 +1290,6 @@ reasoning_1 → prepare_second_prompt → reasoning_2 → END
 | `response_1`       | First reasoning response                |
 | `response_2`       | Second reasoning response               |
 
----
-
 ### **Final Output**
 
 | Output Field | Description                                    |
@@ -1359,10 +1299,6 @@ reasoning_1 → prepare_second_prompt → reasoning_2 → END
 | `deployment` | Model deployment used for both reasoning steps |
 
 formatted according to `ReasoningTestState`.
-
----
-
----
 
 ## 2. `reasoning_with_document` Flow
 
@@ -1376,8 +1312,6 @@ Used when the model needs:
 - content type (e.g., pdf, html, text)
 - a prompt describing what to extract or analyze
 
----
-
 ### **Overview**
 
 1. Validate `prompt`, `document_id`, `content_type`, `deployment`
@@ -1385,15 +1319,11 @@ Used when the model needs:
 3. Run one reasoning node with document grounding
 4. Return model response (streamed or full)
 
----
-
 ### **Flow Structure**
 
 ```
 reasoning → END
 ```
-
----
 
 ### **State (`ReasoningTestState`)**
 
@@ -1407,8 +1337,6 @@ reasoning → END
 | `stream`             | Whether streaming is enabled            |
 | `reasoning_response` | Final response from the reasoning agent |
 
----
-
 ### **Final Output**
 
 | Output Field         | Description                             |
@@ -1419,10 +1347,6 @@ reasoning → END
 | `content_type`       | Content type used for document handling |
 
 formatted according to `ReasoningTestState`.
-
----
-
----
 
 ## 3. `reasoning_multiprompt_with_document` Flow
 
@@ -1435,15 +1359,11 @@ Run **two chained reasoning steps**, where:
 - The **first step** is grounded in a document
 - The **second step** uses the combined prompt only (no document)
 
----
-
 ### **Flow Structure**
 
 ```
 reasoning_1 (with document) → prepare_second_prompt → reasoning_2 → END
 ```
-
----
 
 ### **State (subset)**
 
@@ -1456,16 +1376,12 @@ reasoning_1 (with document) → prepare_second_prompt → reasoning_2 → END
 | `response_1`   | Reasoning output from step 1        |
 | `response_2`   | Reasoning output from step 2        |
 
----
-
 ### **Final Output**
 
 | Output Field | Description                             |
 | ------------ | --------------------------------------- |
 | `response_1` | Response to `prompt_1` (document aware) |
 | `response_2` | Response to updated `prompt_2`          |
-
----
 
 # Summary Table (Recommendation for README)
 
