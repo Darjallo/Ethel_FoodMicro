@@ -9,18 +9,32 @@ class FlowRequest(BaseModel):
     Represents a request to execute a flow.
     """
 
-    flow: str = Field(..., description="The name of the flow to execute")
-    tenant: str = Field(..., description="The tenant identifier for the flow execution")
-    context: dict = Field(
-        default_factory=dict, description="Context data for the flow execution"
+    flow: str = Field(
+        ...,
+        description="The name of the flow to execute.",
+        examples=["example_flow"],
     )
-    stream: bool = Field(False, description="Whether to stream the response")
+    tenant: str = Field(
+        ...,
+        description="The tenant identifier for the flow execution.",
+        examples=["tenant_id"],
+    )
+    context: dict = Field(
+        default_factory=dict,
+        description="Optional context data passed into the flow.",
+        examples=[{"user_message": "Hello"}],
+    )
+    stream: bool = Field(
+        False,
+        description="If true, stream flow updates instead of returning a single response.",
+        examples=[False],
+    )
 
     @field_validator("flow")
     @classmethod
     def validate_flow_name(cls, v):
         """
-        Validate that the flow name is a valid Python module name.
+        Validate that the flow name corresponds to an existing flow module.
         """
         if not v or not find_spec(f"ethelflow.flows.{v}"):
             raise ValueError(f"No such flow '{v}'")
@@ -29,13 +43,18 @@ class FlowRequest(BaseModel):
 
 class FlowContinueRequest(BaseModel):
     """
-    Represents a request to continue a LangGraph flow that has been interrupted.
-    The continuation request must include a list of mappings from interrupt IDs to values.
+    Represents a request to continue a flow that has been interrupted.
     """
 
     data: dict[str, Any] = Field(
-        ..., description="Mapping from interrupt IDs to values"
+        ...,
+        description="Mapping from interrupt identifiers to continuation values.",
+        examples=[{"interrupt_id": {"user_input": "Continue"}}],
     )
-    stream: bool = Field(False, description="Whether to stream the response")
+    stream: bool = Field(
+        False,
+        description="If true, stream flow updates instead of returning a single response.",
+        examples=[False],
+    )
 
     # TODO: validate that the interrupt IDs are valid UUIDs
