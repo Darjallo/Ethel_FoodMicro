@@ -3,7 +3,7 @@ import uuid
 from io import BytesIO
 
 import magic
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ethelflow.assets.s3 import s3_manager
@@ -12,18 +12,42 @@ from ethelflow.data.models import EthelDocument
 
 logger = logging.getLogger("uvicorn.error")
 
-router = APIRouter(prefix="/docs", tags=["docs"])
+router = APIRouter(prefix="/docs", tags=["Docs"])
 
 
 # add a file to the etheldocuments table (POST /docs)
 # example curl command (file name url-encoded):
 # curl -X POST "http://localhost:8080/docs?title=Applied%20Security%20Lab%202023" -F "file=@asl-book-as2023.pdf"
-@router.post("")
+@router.post(
+    "",
+    summary="Create Document",
+)
 async def create_document(
-    title: str,
-    file: UploadFile = File(...),
+    title: str = Query(
+        ...,
+        description="Human-readable title for the document.",
+        example="Applied Security Lab 2023",
+    ),
+    file: UploadFile = File(
+        ...,
+        description="The file to upload (PDF, image, etc.). Sent as multipart/form-data.",
+    ),
     session: AsyncSession = Depends(get_session),
 ):
+    """
+    This module provides API endpoints for document upload and metadata persistence.
+
+    Uploaded files are validated, their MIME type is detected from raw bytes, and the file is stored in an S3-compatible backend. Associated metadata is then persisted to PostgreSQL using the `EthelDocument` ORM model.
+
+    ### Processing Flow
+    1. **Read file bytes**
+    2. **Generate object ID**
+    3. **Detect MIME type**
+    4. **Upload to S3**
+    5. **Persist metadata**
+    6. **Error handling and cleanup**
+    """
+
     data = BytesIO(await file.read())
     object_name = str(uuid.uuid4())
 

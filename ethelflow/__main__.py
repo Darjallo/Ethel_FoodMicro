@@ -5,10 +5,15 @@ from fastapi import FastAPI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 
+
 from ethelflow.assets.s3 import s3_manager
 from ethelflow.routes.docs import router as docs_router
 from ethelflow.routes.flows import router as flows_router
 from ethelflow.settings.postgres_settings import postgres_settings
+
+from pathlib import Path
+from fastapi.responses import HTMLResponse
+import markdown
 
 # from alembic.config import Config
 # from alembic import command
@@ -46,7 +51,32 @@ async def lifespan(_: FastAPI):
     await teardown_checkpointer()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan,
+              openapi_tags=[{
+                  "name": "Docs",
+                  "description": "Upload and manage documents stored in S3 and Postgres."
+              },
+              {
+                  "name": "Flows",
+                  "description": """
+Typical usage pattern:
+1. Start a flow using `/flow/start` to obtain a `run_id`
+2. Continue the flow with `/flow/{run_id}/continue` when it requires input
+3. Query `/flow/{run_id}/status` or `/flow/{run_id}/history` at any time
+4. Attach to a running flow using `/flow/{run_id}/attach` for live updates
+""",
+              }])
+
+
+BASE_DIR = Path(__file__).resolve().parent
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def readme():
+    readme_path = BASE_DIR / "README.md"
+    with open(readme_path, "r", encoding="utf-8") as f:
+        md = f.read()
+    return markdown.markdown(md, extensions=["fenced_code"])
+
+
 app.include_router(docs_router)
 app.include_router(flows_router)
 

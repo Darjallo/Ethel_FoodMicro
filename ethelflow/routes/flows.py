@@ -6,7 +6,7 @@ import uuid
 from collections import defaultdict
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.base import CheckpointTuple
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -17,7 +17,8 @@ from ethelflow.models import FlowContinueRequest, FlowRequest
 
 logger = logging.getLogger("uvicorn.error")
 
-router = APIRouter(prefix="/flow", tags=["flows"])
+router = APIRouter(prefix="/flow", tags=["Flows"])
+
 
 
 async def get_checkpointer(request: Request) -> AsyncPostgresSaver:
@@ -28,12 +29,35 @@ async def get_checkpointer(request: Request) -> AsyncPostgresSaver:
 
 
 # Continue a flow that has been interrupted and waiting for user input
-@router.post("/{run_id}/continue")
+@router.post(
+    "/{run_id}/continue",
+    summary="Continue Flow",
+)
 async def continue_flow(
-    run_id: UUID,
-    continue_request: FlowContinueRequest,
-    checkpointer: AsyncPostgresSaver = Depends(get_checkpointer),
+    run_id: UUID = Path(
+            ...,
+            description="Identifier of the flow run returned by `/flow/start`.",
+            example="b7e7a6b0-2d73-4f4c-a8f2-8baf9a6a5c2e",
+        ),
+    continue_request: FlowContinueRequest = Body(
+        ...,
+        description="Continuation data used to resume an interrupted flow.",
+        example={
+            "data": {"interrupt_id": {"key": "value"}},
+            "stream": False,
+        },
+    ),
+    checkpointer=Depends(get_checkpointer),
 ):
+    """
+    Resume a paused or interrupted flow run.
+
+    This endpoint is used when a flow requires additional input before it can continue.
+
+    ### Behavior
+    - If `stream=false`, the request returns the next output produced by the flow.
+    - If `stream=true`, the response is streamed as JSON update events.
+    """
     checkpoint: CheckpointTuple = await checkpointer.aget_tuple(
         {"configurable": {"thread_id": str(run_id)}}
     )
@@ -60,10 +84,33 @@ async def continue_flow(
     )
 
 
-@router.post("")
-async def run_flow(flow_request: FlowRequest, checkpointer=Depends(get_checkpointer)):
+@router.post(
+    "",
+    summary="Run Flow",
+)
+async def run_flow(
+    flow_request: FlowRequest = Body(
+        ...,
+        description="Flow execution request defining which flow to run and its initial context.",
+        example={
+            "flow": "example_flow",
+            "tenant": "tenant_id",
+            "context": {"user_message": "Hello"},
+            "stream": False,
+        },
+    ),
+    checkpointer=Depends(get_checkpointer),
+):
     """
-    Endpoint to run a flow and return the results.
+    Execute a flow to completion in a single request.
+
+    Use this endpoint when you want to run a flow immediately without explicitly managing a run lifecycle.
+
+    ### Behavior
+    - If `stream=false`, the request returns the first output produced by the flow.
+    - If `stream=true`, the response is streamed as JSON update events.
+
+    The flow state is persisted using the configured checkpointer.
     """
     mod = importlib.import_module(f"ethelflow.flows.{flow_request.flow}")
 
@@ -85,14 +132,31 @@ async def run_flow(flow_request: FlowRequest, checkpointer=Depends(get_checkpoin
 flow_streams = defaultdict(asyncio.Queue)
 
 
-@router.post("/start")
+@router.post(
+    "/start",
+    summary="Start Flow",
+)
 async def start_flow(
-    flow_request: FlowRequest,
-    checkpointer: Checkpointer = Depends(get_checkpointer),
+    flow_request: FlowRequest = Body(
+        ...,
+        description="Configuration and initial context used to start a new flow run.",
+        example={
+            "flow": "example_flow",
+            "tenant": "tenant_id",
+            "context": {"user_message": "Hello"},
+            "stream": False,
+        },
+    ),
+    checkpointer=Depends(get_checkpointer),
 ):
     """
-    Endpoint to start a flow and return its ID.
-    The ID can later be used to attach to the flow and get updates.
+    Start a new flow run and return a `run_id`.
+
+    Use this endpoint when you want to:
+    - create a flow run first
+    - then continue it later using `/flow/{run_id}/continue`
+
+    The returned `run_id` uniquely identifies the flow execution.
     """
     mod = importlib.import_module(f"ethelflow.flows.{flow_request.flow}")
     thread_id = uuid.uuid4()
@@ -114,10 +178,28 @@ async def start_flow(
     return {"run_id": thread_id}
 
 
-@router.get("/{run_id}/attach")
-async def attach(run_id: UUID):
+@router.get(
+    "/{run_id}/attach",
+    summary="Attach to Flow (SSE)",
+)
+async def attach(
+    run_id: UUID = Path(
+        ...,
+        description="Identifier of the flow run to attach to.",
+        example="b7e7a6b0-2d73-4f4c-a8f2-8baf9a6a5c2e",
+    ),
+):
     """
-    Endpoint to attach to a running flow and get its updates (SSE).
+    Attach to a running flow and receive live updates via Server-Sent Events (SSE).
+
+    This endpoint emits `text/event-stream` data and is intended for browser or UI clients.
+    In contrast, streaming responses from `/flow` and `/flow/{run_id}/continue` return
+    JSON update chunks over an HTTP response.
+
+    Notes:
+    - Works only for flows started with streaming enabled.
+    - If the flow has already completed, the stream may remain idle.
+
     # FIXME This will only work for flows with streaming enabled. needs a check for that
     # FIXME Currently, if the flow has already completed, this will hang forever. needs a timeout or a check for completion
     """
@@ -140,11 +222,24 @@ async def attach(run_id: UUID):
 
 
 # get all checkpoints for a given thread ID
-@router.get("/{run_id}/history")
+@router.get(
+    "/{run_id}/history",
+    summary="Get Flow History",
+)
 async def get_run_history(
-    run_id: UUID,
-    checkpointer: AsyncPostgresSaver = Depends(get_checkpointer),
+    run_id: UUID = Path(
+        ...,
+        description="Identifier of the flow run.",
+        example="b7e7a6b0-2d73-4f4c-a8f2-8baf9a6a5c2e",
+    ),
+    checkpointer=Depends(get_checkpointer),
 ):
+    """
+    Retrieve the full execution history for a flow run.
+
+    This includes all persisted checkpoints produced during the flow execution,
+    as stored by the configured Postgres-backed checkpointer.
+    """
     logger.info(f"Fetching history for run_id: {run_id}")
     checkpoints = [
         checkpoint._asdict()
@@ -156,11 +251,24 @@ async def get_run_history(
 
 
 # get the latest checkpoint for a given thread ID
-@router.get("/{run_id}/status")
+@router.get(
+    "/{run_id}/status",
+    summary="Get Flow Status",
+)
 async def get_run_status(
-    run_id: UUID,
-    checkpointer: AsyncPostgresSaver = Depends(get_checkpointer),
+    run_id: UUID = Path(
+        ...,
+        description="Identifier of the flow run.",
+        example="b7e7a6b0-2d73-4f4c-a8f2-8baf9a6a5c2e",
+    ),
+    checkpointer=Depends(get_checkpointer),
 ):
+    """
+    Retrieve the latest checkpoint for a flow run.
+
+    This endpoint returns the most recent persisted state of the flow,
+    which can be used to determine its current execution status.
+    """
     logger.info(f"Fetching status for run_id: {run_id}")
     checkpoint = await checkpointer.aget_tuple(
         {"configurable": {"thread_id": str(run_id)}}
