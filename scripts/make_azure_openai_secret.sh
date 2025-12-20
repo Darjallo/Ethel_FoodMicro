@@ -27,3 +27,5 @@ data:
 EOF
 
 echo "Secret manifest written to ${OUTPUT_PATH}"
+echo "!!! Make sure to move it to the k8s-directory of the project. !!!"
+echo "!!! Do not commit it. !!!"
