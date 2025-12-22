@@ -1,5 +1,5 @@
 # agent_pool/agents/r_processor/Dockerfile
-FROM rocker/r-ver:4.3.2
+FROM rocker/r-ver:4.5.2
 
 # 1) Create an unprivileged group & user (UID:GID=1000)
 RUN groupadd --gid 1000 agentgroup && \

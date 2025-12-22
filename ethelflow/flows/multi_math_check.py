@@ -17,9 +17,12 @@ class MultiMathState(TypedDict, total=False):
     r_script: str
     maxima_type: str
     python_type: str
+    r_type: str
 
     maxima_image: str
     python_image: str
+    r_image: str
+
 
     # raw agent outputs
     maxima_results: Dict[str, Any]
@@ -49,8 +52,10 @@ async def run(
         "reasoning_effort": context.get("reasoning_effort", None),
         "maxima_image": "maxima-executor:latest",
         "python_image": "python:3.12-slim",
+        "r_image": "r-executor:4.5.2",
         "maxima_type": "maxima",
         "python_type": "python",
+        "r_type": "r",
         "deployment": "Ethel_o4_mini",
     }
 
@@ -59,9 +64,9 @@ async def run(
     def normalise(st):
         expr = st.get("expression", "") or ""
         yield {
-            "maxima_script": f"{expr};",
-            "python_script": f"print({expr.replace('^', '**')})",
-            "r_script": f"print({expr})",
+            "maxima_script": f"display2d:false$\nshowtime:false$\nprint({expr})$\n",
+            "python_script": f"print({expr.replace('^', '**')})\n",
+            "r_script": f"print({expr})\n",
         }
 
     flow.add_node("norm", normalise)
@@ -81,23 +86,33 @@ async def run(
         executor_node(
             image_key="maxima_image",
             type_key="maxima_type",
-            expr_key="maxima_script",
+            code_key="maxima_script",
             output_key="maxima_results",
         ),
     )
 
+    flow.add_node(
+        "r",
+        executor_node(
+            image_key="r_image",
+            type_key="r_type",
+            code_key="r_script",
+            output_key="r_results",
+        ),
+    )
+
+
     def build_prompt(st: MultiMathState) -> MultiMathState:
-        maxima_result: ExecutionResult = ExecutionResult.model_validate(
-            st.get("maxima_results")
-        )
-        python_result: ExecutionResult = ExecutionResult.model_validate(
-            st.get("python_results")
-        )
+        maxima_result: ExecutionResult = ExecutionResult.model_validate(st.get("maxima_results"))
+        python_result: ExecutionResult = ExecutionResult.model_validate(st.get("python_results"))
+        r_result: ExecutionResult = ExecutionResult.model_validate(st.get("r_results"))
+
         prompt = (
-            "Here are two outputs from math processors. "
+            "Here are outputs from math processors. "
             "Do they agree, why or why not? Ignore warning messages from the interpreters\n\n"
             f"Maxima: {maxima_result.stdout}\n"
             f"Python: {python_result.stdout}\n"
+            f"R: {r_result.stdout}\n"
         )
         st["prompt"] = prompt
         return st
@@ -107,9 +122,10 @@ async def run(
     flow.set_entry_point("norm")
     flow.add_edge("norm", "python")
     flow.add_edge("norm", "maxima")
+    flow.add_edge("norm", "r")
     flow.add_edge("python", "prompt")
     flow.add_edge("maxima", "prompt")
-
+    flow.add_edge("r", "prompt")
     flow.add_node(
         "compare",
         reasoning_node(

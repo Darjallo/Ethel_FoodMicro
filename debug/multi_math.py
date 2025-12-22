@@ -42,6 +42,7 @@ def _extract_executor_summary(payload: Dict[str, Any]) -> str:
     expr = payload.get("expression", "")
     maxima = payload.get("maxima_results") or {}
     py = payload.get("python_results") or {}
+    r = payload.get("r_results") or {}
 
     maxima_rc = maxima.get("return_code")
     maxima_out = (maxima.get("stdout") or "").strip()
@@ -50,6 +51,10 @@ def _extract_executor_summary(payload: Dict[str, Any]) -> str:
     py_rc = py.get("return_code")
     py_out = (py.get("stdout") or "").strip()
     py_err = (py.get("stderr") or "").strip()
+
+    r_rc = r.get("return_code")
+    r_out = (r.get("stdout") or "").strip()
+    r_err = (r.get("stderr") or "").strip()
 
     reasoning = payload.get("reasoning_result")
 
@@ -73,6 +78,15 @@ def _extract_executor_summary(payload: Dict[str, Any]) -> str:
         if py_err and py_err != py_out:
             lines.append("Python stderr:")
             lines.append(py_err)
+
+    if r_rc is not None:
+        lines.append(f"\nR return_code: {r_rc}")
+        if r_out:
+            lines.append("R stdout:")
+            lines.append(r_out)
+        if r_err and r_err != r_out:
+            lines.append("R stderr:")
+            lines.append(r_err)
 
     if reasoning is not None:
         lines.append("\nReasoning:")
@@ -151,15 +165,20 @@ async def call_flow(
 
 def _decide_exit_code(payload: Dict[str, Any]) -> int:
     """
-    Nonzero exit if either executor return_code is nonzero (when present).
+    Nonzero exit if any executor return_code is nonzero (when present).
     """
     maxima = payload.get("maxima_results") or {}
     py = payload.get("python_results") or {}
+    r = payload.get("r_results") or {}
+
     rcs = []
     if "return_code" in maxima:
         rcs.append(maxima.get("return_code"))
     if "return_code" in py:
         rcs.append(py.get("return_code"))
+    if "return_code" in r:
+        rcs.append(r.get("return_code"))
+
     # If return codes are present and any is nonzero -> failure
     if rcs and any((rc is None) or (int(rc) != 0) for rc in rcs):
         return 2
