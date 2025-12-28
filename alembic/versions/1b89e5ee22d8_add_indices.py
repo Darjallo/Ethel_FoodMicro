@@ -3,7 +3,7 @@
 Revision ID: 1b89e5ee22d8
 Revises: 11421eaba576
 Create Date: 2025-10-22 19:01:01.468347
-
+Patch: 2025-12-28
 """
 
 from typing import Sequence, Union
@@ -37,13 +37,19 @@ def upgrade() -> None:
         ["chunk_id"],
         unique=False,
     )
-    op.create_index(
-        op.f("embeddings_text_embedding_3_large_vector_idx"),
-        "embeddings_text_embedding_3_large",
-        [sa.literal_column("(vector::halfvec(3072))")],
-        unique=False,
-        postgresql_using="hnsw",
-    )
+#    op.create_index(
+#        op.f("embeddings_text_embedding_3_large_vector_idx"),
+#        "embeddings_text_embedding_3_large",
+#        [sa.literal_column("(vector::halfvec(3072))")],
+#        unique=False,
+#        postgresql_using="hnsw",
+#    )
+    op.execute("""
+    CREATE INDEX IF NOT EXISTS embeddings_text_embedding_3_large_vector_idx
+    ON embeddings_text_embedding_3_large
+    USING hnsw ((vector::halfvec(3072)) halfvec_cosine_ops);
+    """)
+
     # ### end Alembic commands ###
 
 
@@ -54,11 +60,13 @@ def downgrade() -> None:
         op.f("ix_embeddings_text_embedding_3_large_chunk_id"),
         table_name="embeddings_text_embedding_3_large",
     )
-    op.drop_index(
-        op.f("embeddings_text_embedding_3_large_vector_idx"),
-        table_name="embeddings_text_embedding_3_large",
-        postgresql_using="hnsw",
-    )
+#    op.drop_index(
+#        op.f("embeddings_text_embedding_3_large_vector_idx"),
+#        table_name="embeddings_text_embedding_3_large",
+#        postgresql_using="hnsw",
+#    )
+    op.execute("DROP INDEX IF EXISTS embeddings_text_embedding_3_large_vector_idx;")
+
     op.drop_index(op.f("ix_chunksets_document_id"), table_name="chunksets")
     op.drop_index(op.f("ix_chunks_chunk_set_id"), table_name="chunks")
     # ### end Alembic commands ###
