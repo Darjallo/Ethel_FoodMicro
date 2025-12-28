@@ -1,5 +1,6 @@
 import asyncio
 import io
+from contextlib import asynccontextmanager
 
 from bs4 import BeautifulSoup
 from fastapi import Depends, FastAPI, HTTPException
@@ -12,7 +13,14 @@ from ethelflow.assets.s3 import s3_manager
 from ethelflow.data.db_utils import get_session
 from ethelflow.data.models import EthelDocument
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await s3_manager.init()
+    yield
+    await s3_manager.close()
+
+app = FastAPI(lifespan=lifespan)
 
 
 def _html_to_text_sync(html: str) -> str:
