@@ -1,7 +1,7 @@
 # Project Ethel
 # Node adapter for semantically chunking text
 #
-# Copyright (C) 2025  Gerd Kortemeyer, ETH Zurich
+# Copyright (C) 2025 ETH Zurich
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -56,6 +56,6 @@ def embedding_node(
 
                 data = EmbeddingResponse.model_validate(response_data)
 
-        yield {output_key: data}
+        yield {output_key: data.embeddings}
 
     return node
