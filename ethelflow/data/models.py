@@ -2,18 +2,83 @@ import datetime
 import uuid
 from typing import List, Optional
 
+import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
-from sqlalchemy.dialects.postgresql import UUID
-from sqlmodel import Column, Field, Relationship, SQLModel, Index, text
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlmodel import Column, Field, Index, Relationship, SQLModel, text
+
+
+class Asset(SQLModel, table=True):
+    """
+    Logical filesystem entry:
+
+        /{tenant}/{collection}/{subpath}/{filename}
+
+    - `subpath` is the remaining "directories" below collection ('' allowed).
+    - `latest_document_id` points at the most recent version (an EthelDocument row).
+    """
+    __tablename__ = "assets"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+            server_default=text("uuid_generate_v4()"),
+        ),
+    )
+
+    tenant: str = Field(nullable=False, index=True)
+    collection: str = Field(nullable=False)
+    subpath: str = Field(nullable=False, sa_column_kwargs={"server_default": ""})
+    filename: str = Field(nullable=False)
+
+    latest_document_id: Optional[uuid.UUID] = Field(
+        default=None,
+        foreign_key="etheldocuments.id",
+    )
+
+    created_at: datetime.datetime = Field(
+        default_factory=datetime.datetime.now,
+        sa_column=Column(sa.DateTime(), nullable=False, server_default=text("now()")),
+    )
+    updated_at: datetime.datetime = Field(
+        default_factory=datetime.datetime.now,
+        sa_column=Column(sa.DateTime(), nullable=False, server_default=text("now()")),
+    )
+
+    # Indexes / constraints as per migration:
+    __table_args__ = (
+        Index("ix_assets_tenant_collection", "tenant", "collection"),
+        Index("ix_assets_path", "tenant", "collection", "subpath", "filename"),
+        sa.UniqueConstraint("tenant", "collection", "subpath", "filename", name="uq_assets_path"),
+    )
+
+    documents: List["EthelDocument"] = Relationship(back_populates="asset")
 
 
 class EthelDocument(SQLModel, table=True):
+    """
+    One concrete stored version of an asset.
+
+    Each overwrite of the same logical path creates a new `EthelDocument` row
+    (new UUID), while `assets.latest_document_id` is updated to point to it.
+    """
     __tablename__ = "etheldocuments"
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
-        sa_column=Column(UUID(as_uuid=True), primary_key=True),
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
+
+    # Link back to the logical asset path
+    asset_id: uuid.UUID = Field(foreign_key="assets.id", nullable=False, index=True)
+
+    # Monotonic version number per asset (1, 2, 3, ...)
+    version: int = Field(nullable=False, default=1)
+
+    # Keep existing metadata (matches prior schema; still useful for UI)
     title: str
     created_at: datetime.datetime = Field(
         default_factory=datetime.datetime.now, nullable=False
@@ -24,7 +89,50 @@ class EthelDocument(SQLModel, table=True):
         sa_column_kwargs={"server_default": "application/octet-stream"},
     )
 
-    chunk_sets: List["ChunkSet"] = Relationship(back_populates="document")
+    asset: Asset = Relationship(back_populates="documents")
+    text_versions: List["DocumentText"] = Relationship(
+        back_populates="document", cascade_delete=True
+    )
+
+
+class DocumentText(SQLModel, table=True):
+    """
+    Extracted text for a given document version (OCR, BeautifulSoup, etc.).
+    """
+    __tablename__ = "document_texts"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+            server_default=text("uuid_generate_v4()"),
+        ),
+    )
+
+    document_id: uuid.UUID = Field(
+        foreign_key="etheldocuments.id",
+        nullable=False,
+        index=True,
+    )
+
+    extractor: str = Field(nullable=False)  # e.g. "ocr", "bs4", "pdfminer"
+    text: Optional[str] = Field(default=None, sa_column=Column(sa.Text))
+
+    created_at: datetime.datetime = Field(
+        default_factory=datetime.datetime.now,
+        sa_column=Column(sa.DateTime(), nullable=False, server_default=text("now()")),
+    )
+
+    __table_args__ = (
+        sa.UniqueConstraint("document_id", "extractor", name="uq_document_texts_document_id_extractor"),
+    )
+
+    document: EthelDocument = Relationship(back_populates="text_versions")
+    chunk_sets: List["ChunkSet"] = Relationship(
+        back_populates="text_version", cascade_delete=True
+    )
 
 
 class ChunkSet(SQLModel, table=True):
@@ -32,15 +140,20 @@ class ChunkSet(SQLModel, table=True):
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
-        sa_column=Column(UUID(as_uuid=True), primary_key=True),
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
-    document_id: uuid.UUID = Field(
-        foreign_key="etheldocuments.id", nullable=False, index=True
+
+    text_id: uuid.UUID = Field(
+        foreign_key="document_texts.id",
+        nullable=False,
+        index=True,
+        ondelete="CASCADE",
     )
-    method: str  # e.g. "sliding_window_500"
+
+    method: str  # e.g. "sliding_window_500", "semantic", "by_paragraph"
     created_at: Optional[str] = Field(default=None)
 
-    document: EthelDocument = Relationship(back_populates="chunk_sets")
+    text_version: DocumentText = Relationship(back_populates="chunk_sets")
     chunks: List["Chunk"] = Relationship(
         back_populates="chunk_set", cascade_delete=True
     )
@@ -51,7 +164,7 @@ class Chunk(SQLModel, table=True):
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
-        sa_column=Column(UUID(as_uuid=True), primary_key=True),
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
     chunk_set_id: uuid.UUID = Field(
         foreign_key="chunksets.id", nullable=False, index=True, ondelete="CASCADE"
@@ -67,11 +180,11 @@ class EmbeddingModel(SQLModel, table=True):
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
-        sa_column=Column(UUID(as_uuid=True), primary_key=True),
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
     name: str  # e.g. "text-embedding-3-large"
     dimension: int
-    table_name: str  # the actual embedding table to use (managed separately)
+    table_name: str  # actual embedding table to use (managed separately)
 
 
 class TextEmbedding3LargeEmbedding(SQLModel, table=True):
@@ -79,14 +192,12 @@ class TextEmbedding3LargeEmbedding(SQLModel, table=True):
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
-        sa_column=Column(UUID(as_uuid=True), primary_key=True),
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
     chunk_id: uuid.UUID = Field(
         foreign_key="chunks.id", nullable=False, index=True, ondelete="CASCADE"
     )
-    vector: List[float] = Field(
-        sa_column=Column(Vector(3072))
-    )  # dimension fixed per model
+    vector: List[float] = Field(sa_column=Column(Vector(3072)))
     created_at: Optional[str] = Field(default=None)
 
     __table_args__ = (
@@ -103,14 +214,12 @@ class TextEmbedding3SmallEmbedding(SQLModel, table=True):
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
-        sa_column=Column(UUID(as_uuid=True), primary_key=True),
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
     chunk_id: uuid.UUID = Field(
         foreign_key="chunks.id", nullable=False, index=True, ondelete="CASCADE"
     )
-    vector: List[float] = Field(
-        sa_column=Column(Vector(1536))
-    )  # dimension fixed per model
+    vector: List[float] = Field(sa_column=Column(Vector(1536)))
     created_at: Optional[str] = Field(default=None)
 
     __table_args__ = (
@@ -120,69 +229,3 @@ class TextEmbedding3SmallEmbedding(SQLModel, table=True):
             postgresql_using="hnsw",
         ),
     )
-
-
-# class QwenMathEmbedding(SQLModel, table=True):
-#     __tablename__ = "embeddings_qwen_math"
-
-#     id: uuid.UUID = Field(
-#         default_factory=uuid.uuid4,
-#         sa_column=Column(UUID(as_uuid=True), primary_key=True),
-#     )
-#     chunk_id: uuid.UUID = Field(foreign_key="chunks.id", nullable=False)
-#     vector: List[float] = Field(
-#         sa_column=Column(Vector(4096))
-#     )  # dimension fixed per model
-#     created_at: Optional[str] = Field(default=None)
-
-
-# class DocumentCourseLink(SQLModel, table=True):
-#     __tablename__ = "document_course_links"
-
-#     document_id: uuid.UUID = Field(
-#         foreign_key="etheldocuments.id", primary_key=True, nullable=False
-#     )
-#     course_id: uuid.UUID = Field(
-#         foreign_key="courses.id", primary_key=True, nullable=False
-#     )
-
-
-# class Course(SQLModel, table=True):
-#     __tablename__ = "courses"
-
-#     id: uuid.UUID = Field(
-#         default_factory=uuid.uuid4,
-#         sa_column=Column(UUID(as_uuid=True), primary_key=True),
-#     )
-#     name: str
-
-#     documents: List[EthelDocument] = Relationship(
-#         back_populates="courses", link_model=DocumentCourseLink
-#     )
-
-
-# class Course(SQLModel, table=True):
-#     __tablename__ = "ethelcourses"
-
-#     id: uuid.UUID = Field(
-#         default_factory=uuid.uuid4,
-#         sa_column=Column(UUID(as_uuid=True), primary_key=True),
-#     )
-#     name: str
-#     created_at: datetime.datetime = Field(default_factory=datetime.datetime.now)
-
-
-# class DocumentCourseLink(SQLModel, table=True):
-#     __tablename__ = "document_course_links"
-
-#     document_id: uuid.UUID = Field(foreign_key="etheldocuments.id", primary_key=True)
-#     course_id: uuid.UUID = Field(foreign_key="ethelcourses.id", primary_key=True)
-#     visible_after: datetime.datetime = Field(
-#         default_factory=datetime.datetime.now,
-#         nullable=False,
-#         description="Document becomes visible to this course after this time",
-#     )
-
-#     # optional: backrefs
-#     document: EthelDocument = Relationship(back_populates="course_links")
-#     course: Course = Relationship(back_populates="document_links")
