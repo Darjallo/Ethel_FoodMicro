@@ -34,7 +34,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(docs_router)
+app.include_router(assets_router)
 app.include_router(flows_router)
 ```
 
@@ -62,12 +62,12 @@ We use a custom `__init_checkpointer()` function to set up global checkpointing 
 
 The `s3_manager` is initialized at startup and provides a shared interface for interacting with our S3-compatible storage. It handles tasks such as `uploading, downloading, and deleting assets`. By initializing it once and exposing it through the application, all routes and services can reliably access S3 without re-creating clients.
 
-## routes/docs.py
+## routes/assets.py
 
-`docs.py` defines the API endpoints for document handling. It validates uploaded files, detects their MIME type, uploads file bytes to S3 via `s3_manager`, and writes the associated metadata to PostgreSQL using the `EthelDocument` ORM model. All routes in this module are grouped under the `/docs` prefix and are connected to the main application through `app.include_router(docs_router)`.
+`assets.py` defines the API endpoints for document handling. It validates uploaded files, detects their MIME type, uploads file bytes to S3 via `s3_manager`, and writes the associated metadata to PostgreSQL using the `EthelDocument` ORM model. All routes in this module are grouped under the `/assets` prefix and are connected to the main application through `app.include_router(assets_router)`.
 
 ```py
-router = APIRouter(prefix="/docs", tags=["docs"])
+router = APIRouter(prefix="/assets", tags=["Assets"])
 
 @router.post("")
 async def create_document(
@@ -125,21 +125,21 @@ file: string
 6. **Error handling**
    If database commit fails, the code attempts to clean up the previously uploaded S3 object to prevent orphaned files.
 
-<h3 id="create_document_docs_post-parameters">Parameters</h3>
+<h3 id="create_document_assets_post-parameters">Parameters</h3>
 
 | Name  | In    | Type           | Required | Description |
 | ----- | ----- | -------------- | -------- | ----------- |
 | title | query | string         | true     | none        |
 | body  | body  | string(binary) | true     | none        |
 
-<h3 id="create_document_docs_post-responses">Responses</h3>
+<h3 id="create_document_assets_post-responses">Responses</h3>
 
 | Status | Meaning                                                                  | Description         | Schema                                            |
 | ------ | ------------------------------------------------------------------------ | ------------------- | ------------------------------------------------- |
 | 200    | [OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)                  | Successful Response | Inline                                            |
 | 422    | [Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3) | Validation Error    | [HTTPValidationError](#schemahttpvalidationerror) |
 
-<h3 id="create_document_docs_post-responseschema">Response Schema</h3>
+<h3 id="create_document_assets_post-responseschema">Response Schema</h3>
 
 <aside class="success">
 This operation does not require authentication
@@ -147,7 +147,7 @@ This operation does not require authentication
 
 ### Endpoint Example - how to upload a document
 
-The following example shows how to call the `POST /docs` endpoint from a frontend client.
+The following example shows how to call the `POST /assets` endpoint from a frontend client.
 The request must be sent as `multipart/form-data` and include both **required** fields: `title` and `file`.
 
 ```ts
@@ -159,7 +159,7 @@ async function uploadDocument() {
   formData.append("title", "My Document");
   formData.append("file", file);
 
-  const res = await axios.post("http://localhost:8000/docs", formData, {
+  const res = await axios.post("http://localhost:8080/assets", formData, {
     headers: {
       "Content-Type": "multipart/form-data",
     },
@@ -1250,9 +1250,9 @@ The reasoning flows provide structured access to the **reasoning agent**, option
 
 There are three flows in this category:
 
-1. **`reasoning_multiprompt`** – two-step chained reasoning (prompt → response → new prompt → response)
-2. **`reasoning_with_document`** – single-step document-aware reasoning
-3. **`reasoning_multiprompt_with_document`** – two-step chained reasoning with document grounding (optional to include)
+1. **`reasoning_multiprompt`** — two-step chained reasoning (prompt → response → new prompt → response)
+2. **`reasoning_with_document`** — single-step document-aware reasoning
+3. **`reasoning_multiprompt_with_document`** — two-step chained reasoning with document grounding (optional to include)
 
 ## 1. `reasoning_multiprompt` Flow
 
