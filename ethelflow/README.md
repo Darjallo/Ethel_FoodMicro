@@ -1,8 +1,7 @@
 ```txt
 Project Ethel
-Node adapter for semantically chunking text
 
-Copyright (C) 2025  Gerd Kortemeyer, ETH Zurich
+Copyright (C) 2025 ETH Zurich
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
