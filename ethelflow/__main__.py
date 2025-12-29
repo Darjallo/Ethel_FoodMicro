@@ -7,7 +7,7 @@ from psycopg_pool import AsyncConnectionPool
 
 
 from ethelflow.assets.s3 import s3_manager
-from ethelflow.routes.docs import router as docs_router
+from ethelflow.routes.assets import router as assets_router
 from ethelflow.routes.flows import router as flows_router
 from ethelflow.settings.postgres_settings import postgres_settings
 
@@ -77,7 +77,7 @@ def readme():
     return markdown.markdown(md, extensions=["fenced_code"])
 
 
-app.include_router(docs_router)
+app.include_router(assets_router)
 app.include_router(flows_router)
 
 

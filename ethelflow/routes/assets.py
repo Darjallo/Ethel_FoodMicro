@@ -12,12 +12,12 @@ from ethelflow.data.models import EthelDocument
 
 logger = logging.getLogger("uvicorn.error")
 
-router = APIRouter(prefix="/docs", tags=["Docs"])
+router = APIRouter(prefix="/assets", tags=["Assets"])
 
 
-# add a file to the etheldocuments table (POST /docs)
+# add a file to the etheldocuments table (POST /assets)
 # example curl command (file name url-encoded):
-# curl -X POST "http://localhost:8080/docs?title=Applied%20Security%20Lab%202023" -F "file=@asl-book-as2023.pdf"
+# curl -X POST "http://localhost:8080/assets?title=Applied%20Security%20Lab%202023" -F "file=@asl-book-as2023.pdf"
 @router.post(
     "",
     summary="Create Document",

@@ -27,7 +27,7 @@ def default_title(path: str) -> str:
 def upload_document(client: httpx.Client, file_path: str, title: str) -> Dict[str, Any]:
     with open(file_path, "rb") as f:
         files = {"file": (os.path.basename(file_path), f, "application/octet-stream")}
-        r = client.post("/docs", params={"title": title}, files=files, timeout=120.0)
+        r = client.post("/assets", params={"title": title}, files=files, timeout=120.0)
 
     if r.status_code >= 300:
         # give a helpful hint for the specific failure you hit
