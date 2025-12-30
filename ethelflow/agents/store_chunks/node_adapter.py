@@ -1,61 +1,66 @@
 from typing import Callable, Dict, Any, AsyncGenerator
-from ethelflow.agents.store_chunks.models import (
-    StoreChunksRequest,
-    StoreChunksResponse,
-)
 import aiohttp
 import uuid
+
+from ethelflow.agents.store_chunks.models import StoreChunksRequest, StoreChunksResponse
 
 # could also be an environment variable
 STORE_CHUNKS_URL: str = "http://store-chunks.default.svc:8000/store_chunks"
 
 
+def _as_uuid(val: Any, field_name: str) -> uuid.UUID:
+    if isinstance(val, uuid.UUID):
+        return val
+    if val is None:
+        raise ValueError(f"{field_name} is required")
+    try:
+        return uuid.UUID(str(val))
+    except Exception as e:
+        raise ValueError(f"Invalid UUID format for {field_name}: {val!r}") from e
+
+
 def store_chunks_node(
-    document_id_key: str = "document_id",
+    text_id_key: str = "text_id",
     chunks_key: str = "chunks",
     method_key: str = "method",
     output_key: str = "store_chunks_response",
+    replace_key: str = "replace",  # optional in state
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
-        # 1) Fetch data from state
-        try:
-            document_id = uuid.UUID((state.get(document_id_key)))
-        except ValueError as e:
-            raise ValueError(
-                f"Invalid UUID format for {document_id_key}: {state.get(document_id_key)}"
-            ) from e
+        text_id = _as_uuid(state.get(text_id_key), text_id_key)
 
         chunks = state.get(chunks_key)
-        if not isinstance(chunks, list) or not all(
-            isinstance(chunk, str) for chunk in chunks
-        ):
-            raise ValueError(
-                f"Expected list of strings for {chunks_key}, got {type(chunks)}"
-            )
+        if not isinstance(chunks, list) or not all(isinstance(c, str) for c in chunks):
+            raise ValueError(f"Expected list[str] for {chunks_key}, got {type(chunks)}")
 
         method = state.get(method_key)
         if not isinstance(method, str):
-            raise ValueError(f"Expected string for {method_key}, got {type(method)}")
+            raise ValueError(f"Expected str for {method_key}, got {type(method)}")
 
-        # 2) Build payload and POST to the running store_chunks agent
+        replace = state.get(replace_key, True)
+        if not isinstance(replace, bool):
+            replace = str(replace).lower() in ("1", "true", "yes")
+
         request = StoreChunksRequest(
-            document_id=document_id,
+            text_id=text_id,
             chunks=chunks,
             method=method,
+            replace=replace,
         )
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                STORE_CHUNKS_URL, json=request.model_dump(mode="json"), timeout=60
-            ) as response:
-                if response.status != 200:
-                    raise ValueError(
-                        f"Store chunks service returned status {response.status}"
-                    )
-                response_data = await response.json()
+                STORE_CHUNKS_URL,
+                json=request.model_dump(mode="json"),
+                timeout=60,
+            ) as resp:
+                if resp.status != 200:
+                    raise ValueError(f"Store chunks service returned status {resp.status}")
+                payload = await resp.json()
 
-                data = StoreChunksResponse.model_validate(response_data)
-
-        yield {output_key: data}
+        data = StoreChunksResponse.model_validate(payload)
+        # keep state JSON-friendly
+        yield {output_key: data.model_dump(mode="json")}
 
     return node
+

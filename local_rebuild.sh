@@ -1,109 +1,108 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# rebuild_reload_microk8s.sh
+# local_rebuild.sh
 #
-# Builds the ethelflow image from ethelflow.Dockerfile, imports it into MicroK8s containerd,
-# updates the ethelflow Deployment to use the new image tag, and waits for rollout.
+# Build + import a local image into MicroK8s containerd and restart deployments so they pick it up.
+# Key behavior:
+#   - Always tags the build as ethelflow:latest (plus an optional timestamp tag)
+#   - Imports ethelflow:latest into MicroK8s containerd
+#   - Rollout-restarts selected deployments (so pods actually reload the refreshed image)
 #
 # Usage:
-#   ./rebuild_reload_microk8s.sh
+#   ./local_rebuild.sh
 #
 # Optional env vars:
 #   NAMESPACE=default
-#   DEPLOYMENT=ethelflow
 #   DOCKERFILE=ethelflow.Dockerfile
 #   IMAGE_REPO=ethelflow
-#   TAG=20251229-185056        (defaults to current datetime)
-#   CONTAINER_NAME=ethelflow   (if not set, script will auto-detect the first container name)
-#   PORT_FORWARD_LOCAL=18080   (if set, will start a port-forward in background and print OpenAPI paths)
-#   PORT_FORWARD_REMOTE=8080   (defaults to 8080)
+#   TAG=20251230-184408            (optional; if unset, script uses current datetime)
+#   DEPLOYMENTS="ethelflow store-chunks store-text store-vectors chunk-text file-to-text embedding reasoning executor"
+#   RESTART_ONLY=0                 (set to 1 to skip build/import and only restart)
+#
+# Requirements:
+#   docker, microk8s
 #
 # Notes:
-# - Requires: docker, microk8s, python3
-# - Uses sudo for docker save/build and microk8s ctr import (common on Ubuntu).
+#   - This script assumes your k8s YAMLs use image: ethelflow:latest (recommended for local dev).
+#   - If your YAML uses explicit tags, you can still use this script, but you’d need to update those tags.
 
 NAMESPACE="${NAMESPACE:-default}"
-DEPLOYMENT="${DEPLOYMENT:-ethelflow}"
 DOCKERFILE="${DOCKERFILE:-ethelflow.Dockerfile}"
 IMAGE_REPO="${IMAGE_REPO:-ethelflow}"
 TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"
-IMAGE="${IMAGE_REPO}:${TAG}"
-PORT_FORWARD_LOCAL="${PORT_FORWARD_LOCAL:-}"
-PORT_FORWARD_REMOTE="${PORT_FORWARD_REMOTE:-8080}"
+DEPLOYMENTS="${DEPLOYMENTS:-ethelflow store-chunks store-text store-vectors chunk-text file-to-text embedding reasoning executor}"
+RESTART_ONLY="${RESTART_ONLY:-0}"
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 
-require_cmd() {
+need() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1" >&2; exit 1; }
 }
 
-require_cmd docker
-require_cmd microk8s
-require_cmd python3
+need docker
+need microk8s
 
 if [[ ! -f "$DOCKERFILE" ]]; then
   echo "ERROR: Dockerfile not found: $DOCKERFILE" >&2
   exit 1
 fi
 
-# Detect container name if not provided
-if [[ -z "${CONTAINER_NAME:-}" ]]; then
-  CONTAINER_NAME="$(microk8s kubectl -n "$NAMESPACE" get deploy "$DEPLOYMENT" \
-    -o jsonpath='{.spec.template.spec.containers[0].name}')"
-  if [[ -z "$CONTAINER_NAME" ]]; then
-    echo "ERROR: Could not detect container name for deploy/$DEPLOYMENT in ns/$NAMESPACE" >&2
-    exit 1
-  fi
-fi
+# Resolve deployments list into array
+read -r -a DEPLOY_ARR <<<"$DEPLOYMENTS"
 
-log "Building image: $IMAGE (Dockerfile: $DOCKERFILE)"
-sudo docker build -f "$DOCKERFILE" -t "$IMAGE" .
+# Helper: does deployment exist?
+deploy_exists() {
+  microk8s kubectl -n "$NAMESPACE" get deploy "$1" >/dev/null 2>&1
+}
 
-log "Importing image into MicroK8s containerd: $IMAGE"
-sudo docker save "$IMAGE" | sudo microk8s ctr image import -
+# Helper: detect first container name
+container_name() {
+  microk8s kubectl -n "$NAMESPACE" get deploy "$1" -o jsonpath='{.spec.template.spec.containers[0].name}'
+}
 
-log "Updating Deployment image: deploy/$DEPLOYMENT container/$CONTAINER_NAME -> $IMAGE"
-microk8s kubectl -n "$NAMESPACE" set image "deploy/$DEPLOYMENT" "$CONTAINER_NAME=$IMAGE"
+if [[ "$RESTART_ONLY" != "1" ]]; then
+  # Build with a timestamp tag and also tag as :latest (so all services using latest stay current)
+  IMAGE_TAGGED="${IMAGE_REPO}:${TAG}"
+  IMAGE_LATEST="${IMAGE_REPO}:latest"
 
-log "Waiting for rollout to complete..."
-microk8s kubectl -n "$NAMESPACE" rollout status "deploy/$DEPLOYMENT"
+  log "Building image: ${IMAGE_TAGGED}"
+  sudo docker build -f "$DOCKERFILE" -t "$IMAGE_TAGGED" .
 
-log "Deployment is updated."
-log "Current image:"
-microk8s kubectl -n "$NAMESPACE" get deploy "$DEPLOYMENT" \
-  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+  log "Tagging as ${IMAGE_LATEST}"
+  sudo docker tag "$IMAGE_TAGGED" "$IMAGE_LATEST"
 
-# Optional: port-forward and print OpenAPI paths
-if [[ -n "$PORT_FORWARD_LOCAL" ]]; then
-  log "Starting port-forward: localhost:${PORT_FORWARD_LOCAL} -> ${DEPLOYMENT}:${PORT_FORWARD_REMOTE}"
-  # Run port-forward in background, capture PID, and ensure cleanup.
-  microk8s kubectl -n "$NAMESPACE" port-forward "deploy/$DEPLOYMENT" \
-    "${PORT_FORWARD_LOCAL}:${PORT_FORWARD_REMOTE}" >/tmp/ethelflow-portforward.log 2>&1 &
-  PF_PID=$!
-  trap 'log "Stopping port-forward (pid=$PF_PID)"; kill $PF_PID >/dev/null 2>&1 || true' EXIT
-
-  # Give it a moment to come up
-  sleep 1
-
-  log "Printing OpenAPI paths from http://localhost:${PORT_FORWARD_LOCAL}/openapi.json"
-  python3 - <<PY
-import json, urllib.request
-url = "http://localhost:${PORT_FORWARD_LOCAL}/openapi.json"
-spec = json.load(urllib.request.urlopen(url, timeout=10))
-for p in sorted(spec.get("paths", {}).keys()):
-    print(p)
-PY
-
-  log "Port-forward is running (pid=$PF_PID). Press Ctrl+C to stop."
-  wait "$PF_PID"
+  # Import :latest into microk8s containerd (this is what k8s will run for local images)
+  log "Importing ${IMAGE_LATEST} into MicroK8s containerd"
+  sudo docker save "$IMAGE_LATEST" | sudo microk8s ctr image import -
 else
-  log "Tip: to verify endpoints, run:"
-  echo "  microk8s kubectl -n $NAMESPACE port-forward deploy/$DEPLOYMENT 18080:$PORT_FORWARD_REMOTE"
-  echo "  python3 - <<'PY'"
-  echo "import json, urllib.request"
-  echo "spec=json.load(urllib.request.urlopen('http://localhost:18080/openapi.json'))"
-  echo "print('\\n'.join(sorted(spec['paths'].keys())))"
-  echo "PY"
+  log "RESTART_ONLY=1 -> skipping build/import"
 fi
+
+# Restart deployments so they pick up the refreshed local image
+for d in "${DEPLOY_ARR[@]}"; do
+  if deploy_exists "$d"; then
+    cname="$(container_name "$d")"
+    if [[ -z "$cname" ]]; then
+      echo "ERROR: could not determine container name for deploy/$d" >&2
+      exit 1
+    fi
+
+    # Ensure they point at :latest (safe even if already set)
+    log "Setting deploy/$d container/$cname image -> ${IMAGE_REPO}:latest"
+    microk8s kubectl -n "$NAMESPACE" set image "deploy/$d" "$cname=${IMAGE_REPO}:latest" >/dev/null
+
+    log "Rollout restart deploy/$d"
+    microk8s kubectl -n "$NAMESPACE" rollout restart "deploy/$d" >/dev/null
+
+    log "Waiting for deploy/$d rollout..."
+    microk8s kubectl -n "$NAMESPACE" rollout status "deploy/$d"
+  else
+    log "Skipping deploy/$d (not found in ns/$NAMESPACE)"
+  fi
+done
+
+log "Done."
+log "Tip: check pods:"
+echo "  microk8s kubectl -n $NAMESPACE get pods | egrep '$(echo "$DEPLOYMENTS" | tr ' ' '|')' || true"
 
