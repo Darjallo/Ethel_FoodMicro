@@ -3,6 +3,7 @@ import uuid
 from typing import List, Optional
 
 import sqlalchemy as sa
+from sqlalchemy import text as sa_text
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Column, Field, Index, Relationship, SQLModel, text
@@ -41,21 +42,37 @@ class Asset(SQLModel, table=True):
 
     created_at: datetime.datetime = Field(
         default_factory=datetime.datetime.now,
-        sa_column=Column(sa.DateTime(), nullable=False, server_default=text("now()")),
+        sa_column=Column(sa.DateTime(), nullable=False, server_default=sa_text("now()")),
     )
     updated_at: datetime.datetime = Field(
         default_factory=datetime.datetime.now,
-        sa_column=Column(sa.DateTime(), nullable=False, server_default=text("now()")),
+        sa_column=Column(sa.DateTime(), nullable=False, server_default=sa_text("now()")),
     )
 
     # Indexes / constraints as per migration:
     __table_args__ = (
         Index("ix_assets_tenant_collection", "tenant", "collection"),
         Index("ix_assets_path", "tenant", "collection", "subpath", "filename"),
-        sa.UniqueConstraint("tenant", "collection", "subpath", "filename", name="uq_assets_path"),
+        sa.UniqueConstraint(
+            "tenant", "collection", "subpath", "filename", name="uq_assets_path"
+        ),
     )
 
-    documents: List["EthelDocument"] = Relationship(back_populates="asset")
+    # --- IMPORTANT: disambiguate the two FK paths between assets and etheldocuments ---
+
+    # "all versions" (etheldocuments.asset_id -> assets.id)
+    documents: List["EthelDocument"] = Relationship(
+        back_populates="asset",
+        sa_relationship_kwargs={"foreign_keys": "[EthelDocument.asset_id]"},
+    )
+
+    # "latest pointer" (assets.latest_document_id -> etheldocuments.id)
+    latest_document: Optional["EthelDocument"] = Relationship(
+        sa_relationship_kwargs={
+            "foreign_keys": "[Asset.latest_document_id]",
+            "post_update": True,   # <- critical for the FK cycle
+            },
+    )
 
 
 class EthelDocument(SQLModel, table=True):
@@ -89,7 +106,12 @@ class EthelDocument(SQLModel, table=True):
         sa_column_kwargs={"server_default": "application/octet-stream"},
     )
 
-    asset: Asset = Relationship(back_populates="documents")
+    # Disambiguate which FK defines this relationship:
+    asset: Asset = Relationship(
+        back_populates="documents",
+        sa_relationship_kwargs={"foreign_keys": "[EthelDocument.asset_id]"},
+    )
+
     text_versions: List["DocumentText"] = Relationship(
         back_populates="document", cascade_delete=True
     )
@@ -122,11 +144,15 @@ class DocumentText(SQLModel, table=True):
 
     created_at: datetime.datetime = Field(
         default_factory=datetime.datetime.now,
-        sa_column=Column(sa.DateTime(), nullable=False, server_default=text("now()")),
+        sa_column=Column(sa.DateTime(), nullable=False, server_default=sa_text("now()")),
     )
 
     __table_args__ = (
-        sa.UniqueConstraint("document_id", "extractor", name="uq_document_texts_document_id_extractor"),
+        sa.UniqueConstraint(
+            "document_id",
+            "extractor",
+            name="uq_document_texts_document_id_extractor",
+        ),
     )
 
     document: EthelDocument = Relationship(back_populates="text_versions")
@@ -229,3 +255,4 @@ class TextEmbedding3SmallEmbedding(SQLModel, table=True):
             postgresql_using="hnsw",
         ),
     )
+
