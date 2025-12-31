@@ -20,6 +20,9 @@ def reasoning_node(
     # Optional keys if document is included in the prompt
     document_id_key: str | None = None,
     content_type_key: str | None = None,
+    document_ids_key: str | None = None,
+    content_types_key: str | None = None,
+    images_key: str | None = None,
     # Output key for the reasoning response
     output_key: str = "reasoning_response",
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
@@ -28,26 +31,46 @@ def reasoning_node(
         prompt = state.get(prompt_key)
         stream = state.get(stream_key, False)
         document_id = state.get(document_id_key) if document_id_key else None
+        document_ids = state.get(document_ids_key) if document_ids_key else None
+        images = state.get(images_key) if images_key else None
         messages = state.get(messages_key) if messages_key else None
         content_type = state.get(content_type_key) if content_type_key else None
+        content_types = state.get(content_types_key) if content_types_key else None
         reasoning_effort = (
             state.get(reasoning_effort_key) if reasoning_effort_key else None
         )
 
-        if isinstance(document_id, uuid.UUID):
-            # there is a document in the prompt
-            if not isinstance(content_type, str):
+        if images is not None:
+            if not isinstance(images, list) or len(images) == 0:
                 raise ValueError(
-                    "content_type must be provided if document_id is provided"
+                    f"Expected non-empty list for {images_key}, got {type(images)}"
                 )
-        elif document_id is not None:
-            # document_id is provided but not a UUID
-            raise ValueError(
-                f"Expected UUID for {document_id_key}, got {type(document_id)}"
-            )
+        elif document_ids is not None:
+            if not isinstance(document_ids, list) or len(document_ids) == 0:
+                raise ValueError(
+                    f"Expected non-empty list for {document_ids_key}, got {type(document_ids)}"
+                )
+            if not isinstance(content_types, list) or len(content_types) != len(
+                document_ids
+            ):
+                raise ValueError(
+                    f"content_types must be a list with the same length as {document_ids_key}"
+                )
+        else:
+            if isinstance(document_id, uuid.UUID):
+                if not isinstance(content_type, str):
+                    raise ValueError(
+                        "content_type must be provided if document_id is provided"
+                    )
+            elif document_id is not None:
+                raise ValueError(
+                    f"Expected UUID for {document_id_key}, got {type(document_id)}"
+                )
 
-        if not isinstance(prompt, str):
+        if prompt is not None and not isinstance(prompt, str):
             raise ValueError(f"Expected string for {prompt_key}, got {type(prompt)}")
+        if prompt is None and not messages:
+            raise ValueError("Either prompt or messages must be provided")
 
         if reasoning_effort is not None and reasoning_effort not in [
             "low",
@@ -59,7 +82,28 @@ def reasoning_node(
             )
 
         async with aiohttp.ClientSession() as session:
-            if document_id:
+            if images:
+                url = REASONING_WITH_DOCUMENT_URL
+                request = ReasoningRequest(
+                    deployment=deployment,
+                    images=images,
+                    messages=messages,
+                    prompt=prompt,
+                    reasoning_effort=reasoning_effort,
+                    stream=stream,
+                )
+            elif document_ids:
+                url = REASONING_WITH_DOCUMENT_URL
+                request = ReasoningRequest(
+                    deployment=deployment,
+                    document_ids=document_ids,
+                    content_types=content_types,
+                    messages=messages,
+                    prompt=prompt,
+                    reasoning_effort=reasoning_effort,
+                    stream=stream,
+                )
+            elif document_id:
                 url = REASONING_WITH_DOCUMENT_URL
                 request = ReasoningRequest(
                     deployment=deployment,
