@@ -24,25 +24,49 @@ def default_title(path: str) -> str:
     return os.path.splitext(os.path.basename(path))[0]
 
 
-def upload_document(client: httpx.Client, file_path: str, title: str) -> Dict[str, Any]:
+def now_tag() -> str:
+    return time.strftime("%Y%m%d-%H%M%S")
+
+
+def build_logical_path(tenant: str, collection: str, subdir: str, filename: str) -> str:
+    # subdir may be "" or "a/b/c"
+    subdir = (subdir or "").strip("/")
+    if subdir:
+        return f"/{tenant}/{collection}/{subdir}/{filename}"
+    return f"/{tenant}/{collection}/{filename}"
+
+
+def upload_document(
+    client: httpx.Client,
+    file_path: str,
+    logical_path: str,
+    title: str,
+    overwrite: bool = True,
+) -> Dict[str, Any]:
     with open(file_path, "rb") as f:
         files = {"file": (os.path.basename(file_path), f, "application/octet-stream")}
-        r = client.post("/assets", params={"title": title}, files=files, timeout=120.0)
+        params = {
+            "path": logical_path,
+            "title": title,
+            "overwrite": str(overwrite).lower(),
+        }
+        r = client.post("/assets", params=params, files=files, timeout=300.0)
 
     if r.status_code >= 300:
-        # give a helpful hint for the specific failure you hit
-        if r.status_code == 500 and "relation \"etheldocuments\" does not exist" in r.text:
-            raise RuntimeError(
-                "Upload failed because Postgres tables are missing.\n"
-                "Run the init script to create tables (SQLModel.metadata.create_all) "
-                "or run your Alembic migrations.\n\n"
-                f"Server said: {r.text}"
-            )
         raise RuntimeError(f"Upload failed HTTP {r.status_code}: {r.text}")
 
     doc = r.json()
-    if "id" not in doc:
-        raise RuntimeError(f"Upload response missing 'id': {doc}")
+
+    # Current /assets returns document_id, not id
+    if "document_id" not in doc:
+        raise RuntimeError(f"Upload response missing 'document_id': {doc}")
+
+    # sanity check
+    try:
+        uuid.UUID(str(doc["document_id"]))
+    except Exception:
+        raise RuntimeError(f"Upload response document_id is not a UUID: {doc['document_id']!r}")
+
     return doc
 
 
@@ -58,7 +82,7 @@ def run_flow_sync(
         "context": context,
         "stream": False,
     }
-    r = client.post("/flow", json=body, timeout=600.0)  # embedding + chunking can take time
+    r = client.post("/flow", json=body, timeout=1200.0)
     if r.status_code >= 300:
         raise RuntimeError(f"POST /flow failed HTTP {r.status_code}: {r.text}")
     try:
@@ -89,9 +113,9 @@ def start_flow_async(
     return str(run_id)
 
 
-def poll_status(client: httpx.Client, run_id: str, timeout_s: float = 300.0, poll_s: float = 2.0) -> Any:
+def poll_status(client: httpx.Client, run_id: str, timeout_s: float = 600.0, poll_s: float = 2.0) -> Any:
     t0 = time.time()
-    last = None
+    last: Any = None
     while time.time() - t0 < timeout_s:
         r = client.get(f"/flow/{run_id}/status", timeout=20.0)
         if r.status_code < 300:
@@ -108,45 +132,62 @@ def poll_status(client: httpx.Client, run_id: str, timeout_s: float = 300.0, pol
 def main() -> None:
     ap = argparse.ArgumentParser(description="Upload a file to EthelFlow and run e2e_embedding.")
     ap.add_argument("file", help="Path to file (e.g. ./foo/bar.pdf)")
-    ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help=f"EthelFlow base URL (default: {DEFAULT_BASE_URL})")
+    ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help=f"Base URL (default: {DEFAULT_BASE_URL})")
+
+    # Logical path controls
+    ap.add_argument("--asset-path", default=None, help="Full logical path, e.g. /ethz/physics/mechanics/demo/x.pdf")
+    ap.add_argument("--tenant", default="debug", help="Logical tenant for /assets path (default: debug)")
+    ap.add_argument("--collection", default="physics", help="Logical collection for /assets path (default: physics)")
+    ap.add_argument("--subdir", default=f"uploads/_run_{now_tag()}", help="Subdir under collection (default: unique run dir)")
+
     ap.add_argument("--title", default=None, help="Document title (default: filename stem)")
     ap.add_argument("--method", default="recursive_char_1000_100_htmlstrip", help="Chunking method label")
-    ap.add_argument("--flow", default="e2e_embedding", help="Flow module name under ethelflow.flows (default: e2e_embedding)")
-    ap.add_argument("--tenant", default="debug", help="Tenant string to send in FlowRequest (default: debug)")
-    ap.add_argument("--async-flow", action="store_true", help="Use /flow/start + /flow/{run_id}/status instead of /flow")
+    ap.add_argument("--flow", default="e2e_embedding", help="Flow name under ethelflow.flows (default: e2e_embedding)")
+    ap.add_argument("--flow-tenant", default="debug", help="Tenant string to send in FlowRequest (default: debug)")
+    ap.add_argument("--async-flow", action="store_true", help="Use /flow/start + status polling")
     ap.add_argument("--insecure", action="store_true", help="Disable TLS verify (only for self-signed https)")
+    ap.add_argument("--no-overwrite", action="store_true", help="Set overwrite=false on upload")
     args = ap.parse_args()
 
     if not os.path.isfile(args.file):
         die(f"Not a file: {args.file}")
 
     title = args.title or default_title(args.file)
+    filename = os.path.basename(args.file)
+
+    logical_path = args.asset_path
+    if not logical_path:
+        logical_path = build_logical_path(args.tenant, args.collection, args.subdir, filename)
 
     with httpx.Client(base_url=args.base_url.rstrip("/"), verify=not args.insecure) as client:
-        print(f"Base URL: {args.base_url}")
-        print(f"Uploading: {args.file}")
+        print(f"Base URL:    {args.base_url}")
+        print(f"Uploading:   {args.file}")
+        print(f"Asset path:  {logical_path}")
+        print(f"Overwrite:   {not args.no_overwrite}")
 
-        doc = upload_document(client, args.file, title)
-        print("\n--- uploaded document ---")
+        doc = upload_document(
+            client,
+            args.file,
+            logical_path=logical_path,
+            title=title,
+            overwrite=not args.no_overwrite,
+        )
+        print("\n--- upload response ---")
         print(json.dumps(doc, indent=2))
 
-        doc_id = str(doc["id"])
-        try:
-            uuid.UUID(doc_id)
-        except Exception:
-            print(f"WARNING: document id doesn't parse as UUID: {doc_id}")
+        document_id = str(doc["document_id"])
 
-        # Context expected by e2e_embedding.py: uses context.get("document_id")
-        context = {"document_id": doc_id, "method": args.method}
+        # Context expected by e2e_embedding.py: context.get("document_id")
+        context = {"document_id": document_id, "method": args.method}
 
         if args.async_flow:
             print(f"\nStarting async flow '{args.flow}'...")
-            run_id = start_flow_async(client, args.flow, context=context, tenant=args.tenant)
+            run_id = start_flow_async(client, args.flow, context=context, tenant=args.flow_tenant)
             print(f"run_id = {run_id}")
             poll_status(client, run_id)
         else:
             print(f"\nRunning flow '{args.flow}' via POST /flow ...")
-            result = run_flow_sync(client, args.flow, context=context, tenant=args.tenant)
+            result = run_flow_sync(client, args.flow, context=context, tenant=args.flow_tenant)
             print("\n--- flow result ---")
             print(json.dumps(result, indent=2) if isinstance(result, (dict, list)) else str(result))
 
