@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUTPUT_PATH="k8s/azure-openai-secrets.yaml"
+OUTPUT_PATH="../k8s/azure-openai-secrets.yaml"
 SECRET_NAME="azure-openai-secrets"
 
 API_KEY="${1:-}"
@@ -27,5 +27,4 @@ data:
 EOF
 
 echo "Secret manifest written to ${OUTPUT_PATH}"
-echo "!!! Make sure to move it to the k8s-directory of the project. !!!"
 echo "!!! Do not commit it. !!!"
