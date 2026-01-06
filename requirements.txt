@@ -8,7 +8,6 @@ pydantic-settings >= 2.9.1, == 2.9.*
 uvicorn >= 0.34.3, == 0.34.*
 ruff >= 0.11.13, == 0.11.*
 openai >= 1.86.0, == 1.86.*
-pymongo >= 4.13.2, == 4.13.*
 pgvector >= 0.4.1, == 0.4.*
 psycopg[binary,pool] >= 3.2.9, == 3.2.*
 kubernetes-asyncio >= 33.1.0, == 33.*
