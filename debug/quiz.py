@@ -14,9 +14,9 @@ UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
 
-INTERRUPT_ID_RE = re.compile(r"id='([0-9a-fA-F]+)'")
-INTERRUPT_VALUE_RE = re.compile(
-    r"Interrupt\(value=(?P<lit>'(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\"),\s*id='[0-9a-fA-F]+'\)",
+# Capture BOTH value and id from the SAME Interrupt(...) occurrence.
+INTERRUPT_RE = re.compile(
+    r"Interrupt\(\s*value=(?P<lit>'(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\"),\s*id='(?P<id>[0-9a-fA-F]+)'\s*\)",
     re.DOTALL,
 )
 
@@ -97,14 +97,11 @@ def _extract_run_id(buf: str) -> Optional[str]:
 
 
 def _extract_interrupt(buf: str) -> Tuple[Optional[str], Optional[str]]:
-    if "__interrupt__" not in buf and "Interrupt(value" not in buf:
+    m = INTERRUPT_RE.search(buf)
+    if not m:
         return None, None
-
-    mid = INTERRUPT_ID_RE.search(buf)
-    mval = INTERRUPT_VALUE_RE.search(buf)
-
-    interrupt_id = mid.group(1) if mid else None
-    interrupt_value = _decode_python_string_literal(mval.group("lit")) if mval else None
+    interrupt_id = m.group("id")
+    interrupt_value = _decode_python_string_literal(m.group("lit"))
     return interrupt_id, interrupt_value
 
 
@@ -120,28 +117,14 @@ def main() -> int:
     ap.add_argument("topic", help="Quiz topic (e.g., Multiplication)")
     ap.add_argument("--base-url", default="http://localhost:8080", help="EthelFlow base URL")
     ap.add_argument("--tenant", default="ethz", help="Tenant")
-    ap.add_argument(
-        "--inference-class",
-        default="reasoning",
-        help="Inference class (default: reasoning)",
-    )
-    ap.add_argument(
-        "--deployment",
-        default=None,
-        help="Optional deployment override (if omitted, tenant routing decides)",
-    )
-    ap.add_argument(
-        "--reasoning-effort",
-        default=None,
-        help="Optional reasoning effort hint (e.g., low/medium/high)",
-    )
+    ap.add_argument("--inference-class", default="reasoning", help="Inference class (default: reasoning)")
+    ap.add_argument("--deployment", default=None, help="Optional deployment override (if omitted, tenant routing decides)")
+    ap.add_argument("--reasoning-effort", default=None, help="Optional reasoning effort hint (e.g., low/medium/high)")
     args = ap.parse_args()
 
     base = args.base_url.rstrip("/")
-
     start_url = base + "/flow"
 
-    # IMPORTANT: flows currently only get `context`, so tenant & routing must be inside context.
     ctx: Dict[str, Any] = {
         "topic": args.topic,
         "tenant": args.tenant,
@@ -154,7 +137,7 @@ def main() -> int:
 
     start_payload = {
         "flow": "quiz",
-        "tenant": args.tenant,   # keep top-level too
+        "tenant": args.tenant,  # keep top-level too
         "context": ctx,
         "stream": True,
     }
@@ -191,15 +174,17 @@ def main() -> int:
         print("ERROR: Could not detect a run_id/thread_id in the stream.")
         return 1
     if not interrupt_id or not question_text:
-        print("ERROR: Did not find an interrupt in the stream (no Interrupt(..., id='...') seen).")
+        print("ERROR: Did not find an Interrupt(value=..., id='...') in the stream.")
         return 1
 
     _print_block(question_text)
-
     answer = input("Your answer> ").strip()
 
     continue_url = f"{base}/flow/{run_id}/continue"
     cont_payload = {"data": {interrupt_id: answer}, "stream": True}
+
+    # helpful debug line so you can see what key you’re using
+    print(f"(debug) continuing run_id={run_id} with interrupt_id={interrupt_id}", file=sys.stderr)
 
     paths = _discover_paths(base)
     if paths is not None and "/flow/{run_id}/continue" not in paths:
