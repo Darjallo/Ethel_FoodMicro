@@ -12,33 +12,23 @@ from ethelflow.agents.store_text.node_adapter import store_text_node
 from ethelflow.agents.store_vectors.node_adapter import store_vectors_node
 
 
-# End-to-end embedding flow for an Ethel document:
-# 1. Extract text from file (document_id) with file_to_text agent
-# 2. Store extracted text (document_texts) with store_text agent -> text_id
-# 3. Chunk extracted text with chunk_text agent
-# 4. Store chunks (chunksets/chunks) for text_id with store_chunks agent -> chunk_ids
-# 5. Embed chunks with embedding agent
-# 6. Store embeddings with store_vectors agent
 class E2EEmbeddingState(TypedDict, total=False):
+    tenant: str
+    embedding_space: str  # optional override (otherwise tenant default in catalog)
+
     document_id: uuid.UUID
-
-    # file_to_text output
     text: str
-    extractor: str  # required by store_text
+    extractor: str
 
-    # store_text output
-    text_id: str  # keep JSON-friendly (node_adapter returns str)
+    text_id: str
     store_text_response: dict
 
-    # chunking
     chunks: List[str]
-    method: str  # chunking method name
+    method: str
 
-    # store_chunks output
     store_chunks_response: dict
     chunk_ids: List[uuid.UUID]
 
-    # embeddings
     embeddings: List[List[float]]
     store_vectors_response: dict
 
@@ -49,24 +39,19 @@ def prepare_for_store_vectors(state: E2EEmbeddingState) -> E2EEmbeddingState:
     return state
 
 
-async def run(
-    thread_id: uuid.UUID,
-    context=None,
-    stream: bool = False,
-    checkpointer=None,
-    command=None,
-):
+async def run(thread_id: uuid.UUID, context=None, stream: bool = False, checkpointer=None, command=None):
     context = context or {}
+
     initial_state: E2EEmbeddingState = {
+        "tenant": context.get("tenant"),  # <-- critical
+        "embedding_space": context.get("embedding_space"),  # optional
         "document_id": context.get("document_id"),
-        # store_text expects an extractor label; default is fine for now
         "extractor": context.get("extractor", "file_to_text"),
         "method": context.get("method", "recursive_char_1000_100_htmlstrip"),
     }
 
     workflow = StateGraph(E2EEmbeddingState)
 
-    # Nodes
     file_to_text = file_to_text_node()
     store_text = store_text_node(
         document_id_key="document_id",
@@ -75,22 +60,11 @@ async def run(
         output_text_id_key="text_id",
         output_key="store_text_response",
     )
-    chunk_text = chunk_text_node(
-        input_text_key="text",
-        output_key="chunks",
-        chunk_size=1000,
-        chunk_overlap=100,
-    )
-    store_chunks = store_chunks_node(
-        text_id_key="text_id",
-        chunks_key="chunks",
-        method_key="method",
-        output_key="store_chunks_response",
-    )
-    embedding = embedding_node(input_texts_key="chunks", output_key="embeddings")
-    store_vectors = store_vectors_node(embeddings_key="embeddings", chunk_ids_key="chunk_ids")
+    chunk_text = chunk_text_node(input_text_key="text", output_key="chunks", chunk_size=1000, chunk_overlap=100)
+    store_chunks = store_chunks_node(text_id_key="text_id", chunks_key="chunks", method_key="method", output_key="store_chunks_response")
+    embedding = embedding_node(input_texts_key="chunks", tenant_key="tenant", space_key="embedding_space", output_key="embeddings")
+    store_vectors = store_vectors_node(embeddings_key="embeddings", chunk_ids_key="chunk_ids", tenant_key="tenant", space_key="embedding_space")
 
-    # Graph
     workflow.add_node("file_to_text", file_to_text)
     workflow.add_node("store_text", store_text)
     workflow.add_node("chunk_text", chunk_text)

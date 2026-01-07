@@ -1,152 +1,87 @@
-from typing import Any, Callable, Dict, AsyncGenerator
-from ethelflow.agents.reasoning.models import ReasoningRequest, ReasoningResponse
-import uuid
+from __future__ import annotations
+
+from typing import Any, AsyncGenerator, Callable, Dict
 import aiohttp
+import uuid
+
+from ethelflow.agents.reasoning.models import ReasoningRequest, ReasoningResponse
 
 REASONING_URL: str = "http://reasoning.default.svc:8000/reasoning"
-REASONING_WITH_DOCUMENT_URL: str = (
-    "http://reasoning.default.svc:8000/reasoning_with_document"
-)
+REASONING_WITH_DOCUMENT_URL: str = "http://reasoning.default.svc:8000/reasoning_with_document"
 
 
 def reasoning_node(
-    deployment_key: str = "deployment",
+    tenant_key: str = "tenant",
     prompt_key: str = "prompt",
     stream_key: str = "stream",
-    # Optional key for additional messages in the chat completion
     messages_key: str = "messages",
-    # Optional key for reasoning effort
     reasoning_effort_key: str | None = None,
-    # Optional keys if document is included in the prompt
     document_id_key: str | None = None,
     content_type_key: str | None = None,
     document_ids_key: str | None = None,
     content_types_key: str | None = None,
     images_key: str | None = None,
-    # Output key for the reasoning response
     output_key: str = "reasoning_response",
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
-        deployment = state.get(deployment_key)
+        tenant = state.get(tenant_key)
+        if not isinstance(tenant, str) or not tenant.strip():
+            raise ValueError(f"Expected non-empty str for {tenant_key}, got {tenant!r}")
+
         prompt = state.get(prompt_key)
         stream = state.get(stream_key, False)
+
         document_id = state.get(document_id_key) if document_id_key else None
         document_ids = state.get(document_ids_key) if document_ids_key else None
         images = state.get(images_key) if images_key else None
         messages = state.get(messages_key) if messages_key else None
         content_type = state.get(content_type_key) if content_type_key else None
         content_types = state.get(content_types_key) if content_types_key else None
-        reasoning_effort = (
-            state.get(reasoning_effort_key) if reasoning_effort_key else None
-        )
-
-        if images is not None:
-            if not isinstance(images, list) or len(images) == 0:
-                raise ValueError(
-                    f"Expected non-empty list for {images_key}, got {type(images)}"
-                )
-        elif document_ids is not None:
-            if not isinstance(document_ids, list) or len(document_ids) == 0:
-                raise ValueError(
-                    f"Expected non-empty list for {document_ids_key}, got {type(document_ids)}"
-                )
-            if not isinstance(content_types, list) or len(content_types) != len(
-                document_ids
-            ):
-                raise ValueError(
-                    f"content_types must be a list with the same length as {document_ids_key}"
-                )
-        else:
-            if isinstance(document_id, uuid.UUID):
-                if not isinstance(content_type, str):
-                    raise ValueError(
-                        "content_type must be provided if document_id is provided"
-                    )
-            elif document_id is not None:
-                raise ValueError(
-                    f"Expected UUID for {document_id_key}, got {type(document_id)}"
-                )
+        reasoning_effort = state.get(reasoning_effort_key) if reasoning_effort_key else None
 
         if prompt is not None and not isinstance(prompt, str):
-            raise ValueError(f"Expected string for {prompt_key}, got {type(prompt)}")
+            raise ValueError(f"Expected str for {prompt_key}, got {type(prompt)}")
         if prompt is None and not messages:
             raise ValueError("Either prompt or messages must be provided")
 
-        if reasoning_effort is not None and reasoning_effort not in [
-            "low",
-            "medium",
-            "high",
-        ]:
-            raise ValueError(
-                f'Expected "low", "medium", or "high" for {reasoning_effort_key}, got {reasoning_effort}'
-            )
+        url = REASONING_URL
+        req = ReasoningRequest(
+            tenant=tenant,
+            messages=messages,
+            prompt=prompt,
+            reasoning_effort=reasoning_effort,
+            stream=stream,
+        )
+
+        if images:
+            url = REASONING_WITH_DOCUMENT_URL
+            req.images = images
+        elif document_ids:
+            url = REASONING_WITH_DOCUMENT_URL
+            req.document_ids = document_ids
+            req.content_types = content_types
+        elif document_id:
+            url = REASONING_WITH_DOCUMENT_URL
+            req.document_id = document_id
+            req.content_type = content_type
 
         async with aiohttp.ClientSession() as session:
-            if images:
-                url = REASONING_WITH_DOCUMENT_URL
-                request = ReasoningRequest(
-                    deployment=deployment,
-                    images=images,
-                    messages=messages,
-                    prompt=prompt,
-                    reasoning_effort=reasoning_effort,
-                    stream=stream,
-                )
-            elif document_ids:
-                url = REASONING_WITH_DOCUMENT_URL
-                request = ReasoningRequest(
-                    deployment=deployment,
-                    document_ids=document_ids,
-                    content_types=content_types,
-                    messages=messages,
-                    prompt=prompt,
-                    reasoning_effort=reasoning_effort,
-                    stream=stream,
-                )
-            elif document_id:
-                url = REASONING_WITH_DOCUMENT_URL
-                request = ReasoningRequest(
-                    deployment=deployment,
-                    document_id=document_id,
-                    content_type=content_type,
-                    messages=messages,
-                    prompt=prompt,
-                    reasoning_effort=reasoning_effort,
-                    stream=stream,
-                )
-            else:
-                url = REASONING_URL
-                request = ReasoningRequest(
-                    deployment=deployment,
-                    messages=messages,
-                    prompt=prompt,
-                    reasoning_effort=reasoning_effort,
-                    stream=stream,
-                )
-
-            async with session.post(
-                url, json=request.model_dump(mode="json"), timeout=300
-            ) as response:
+            async with session.post(url, json=req.model_dump(mode="json"), timeout=300) as response:
                 if response.status != 200:
-                    error_text = await response.text()
-                    raise ValueError(
-                        f"Reasoning service returned status {response.status}: {error_text}"
-                    )
+                    raise ValueError(f"Reasoning service returned {response.status}: {await response.text()}")
 
                 if stream:
-                    full_response = ""
+                    full = ""
                     async for chunk in response.content.iter_any():
-                        chunk_text = chunk.decode("utf-8")
-                        full_response += chunk_text
-                        yield {output_key: chunk_text}
-
-                    yield {output_key: "\n"}
-
-                    yield {output_key: None}  # Indicate end of stream
-                    yield {output_key: full_response}
+                        txt = chunk.decode("utf-8")
+                        full += txt
+                        yield {output_key: txt}
+                    yield {output_key: None}
+                    yield {output_key: full}
                 else:
-                    response_data = await response.json()
-                    data = ReasoningResponse.model_validate(response_data)
+                    payload = await response.json()
+                    data = ReasoningResponse.model_validate(payload)
                     yield {output_key: data.response}
 
     return node
+

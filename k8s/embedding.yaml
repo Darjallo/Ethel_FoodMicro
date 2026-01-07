@@ -18,14 +18,33 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "ethelflow.agents.embedding"]
           env:
-            - name: ETHELFLOW_EMBEDDING_AZURE_ENDPOINT
-              value: https://cog-openai-ethel.openai.azure.com/
-            - name: ETHELFLOW_EMBEDDING_API_KEY
+            # Catalog mount location
+            - name: ETHELFLOW_MODEL_CATALOG_PATH
+              value: /etc/ethelflow/catalog.yaml
+
+            # Provider API key for provider "ethz_azure_openai"
+            - name: ETHELFLOW_PROVIDER_ETHZ_AZURE_OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: azure-openai-secrets
+                  name: ethz-azure-openai-secrets
                   key: api_key
 
+            # Optional fallback (only used if request/context does not specify a space)
+            - name: ETHELFLOW_DEFAULT_EMBEDDING_SPACE
+              value: ada3_large
+
+          volumeMounts:
+            - name: model-catalog
+              mountPath: /etc/ethelflow
+              readOnly: true
+
+      volumes:
+        - name: model-catalog
+          configMap:
+            name: ethelflow-model-catalog
+            items:
+              - key: catalog.yaml
+                path: catalog.yaml
 ---
 apiVersion: v1
 kind: Service
@@ -39,3 +58,4 @@ spec:
       port: 8000
       targetPort: 8000
   type: ClusterIP
+

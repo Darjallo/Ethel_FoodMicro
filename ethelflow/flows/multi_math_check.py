@@ -8,9 +8,8 @@ from ethelflow.agents.executor.node_adapter import executor_node
 from ethelflow.agents.reasoning.node_adapter import reasoning_node
 
 
-# ──────────── State schema ─────────────────────────────────────
 class MultiMathState(TypedDict, total=False):
-    # expression & per-lang scripts
+    tenant: str
     expression: str
     maxima_script: str
     python_script: str
@@ -23,8 +22,6 @@ class MultiMathState(TypedDict, total=False):
     python_image: str
     r_image: str
 
-
-    # raw agent outputs
     maxima_results: Dict[str, Any]
     python_results: Dict[str, Any]
     r_results: Dict[str, Any]
@@ -33,10 +30,9 @@ class MultiMathState(TypedDict, total=False):
 
     reasoning_result: str
     reasoning_effort: str
-    deployment: str
+    stream: bool
 
 
-# ──────────── Flow entrypoint ──────────────────────────────────
 async def run(
     thread_id: uuid.UUID,
     context=None,
@@ -44,11 +40,12 @@ async def run(
     checkpointer=None,
     command=None,
 ):
-    if context.get("expression") is None:
+    if not context or context.get("expression") is None:
         raise ValueError("Missing 'expression' in context")
 
     state: MultiMathState = {
         "expression": context.get("expression"),
+        "tenant" : context.get("tenant"),
         "reasoning_effort": context.get("reasoning_effort", None),
         "maxima_image": "maxima-executor:latest",
         "python_image": "python:3.12-slim",
@@ -56,7 +53,7 @@ async def run(
         "maxima_type": "maxima",
         "python_type": "python",
         "r_type": "r",
-        "deployment": "Ethel_o4_mini",
+        "stream": stream,
     }
 
     flow = StateGraph(MultiMathState)
@@ -101,7 +98,6 @@ async def run(
         ),
     )
 
-
     def build_prompt(st: MultiMathState) -> MultiMathState:
         maxima_result: ExecutionResult = ExecutionResult.model_validate(st.get("maxima_results"))
         python_result: ExecutionResult = ExecutionResult.model_validate(st.get("python_results"))
@@ -126,16 +122,18 @@ async def run(
     flow.add_edge("python", "prompt")
     flow.add_edge("maxima", "prompt")
     flow.add_edge("r", "prompt")
+
     flow.add_node(
         "compare",
         reasoning_node(
-            deployment_key="deployment",
             prompt_key="prompt",
+            tenant_key="tenant",
             reasoning_effort_key="reasoning_effort",
             stream_key="stream",
             output_key="reasoning_result",
         ),
     )
+
     flow.add_edge("prompt", "compare")
     flow.set_finish_point("compare")
 
@@ -144,7 +142,10 @@ async def run(
 
     if stream:
         async for item in app.astream_events(state, config=config, version="v2"):
-            if item["event"] == "on_chain_stream":
-                yield item["data"]["chunk"]["reasoning_result"]
+            if item.get("event") == "on_chain_stream":
+                chunk = item["data"]["chunk"].get("reasoning_result")
+                if chunk is not None:
+                    yield chunk
     else:
         yield await app.ainvoke(state, config=config)
+

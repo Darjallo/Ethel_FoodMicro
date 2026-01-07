@@ -1,7 +1,8 @@
+import inspect
 import logging
 import os
 import uuid
-from typing import TypedDict
+from typing import Optional, TypedDict
 
 from langgraph.graph import StateGraph
 from langgraph.pregel import Pregel
@@ -16,13 +17,29 @@ logger = logging.getLogger("uvicorn.error")
 
 
 class QuizState(TypedDict, total=False):
+    # routing / config
+    tenant: str
+    inference_class: str
+    deployment: Optional[str]
+    reasoning_effort: Optional[str]
+    stream: bool
+
+    # quiz content
     topic: str
-    deployment: str
     topic_prompt: str
     feedback_prompt: str
     question: str
     answer: str
     feedback: str
+
+
+# ---- helper: only pass kwargs that reasoning_node actually accepts ----
+_REASONING_NODE_PARAMS = set(inspect.signature(reasoning_node).parameters.keys())
+
+
+def _reasoning_node(**kwargs):
+    filtered = {k: v for k, v in kwargs.items() if k in _REASONING_NODE_PARAMS}
+    return reasoning_node(**filtered)
 
 
 async def run(
@@ -33,19 +50,40 @@ async def run(
     checkpointer=None,
 ):
     if command is not None and checkpointer is None:
-        raise ValueError(
-            "Checkpointer must be provided when resuming a flow with a command"
-        )
+        raise ValueError("Checkpointer must be provided when resuming a flow with a command")
+
     # If command is not provided, we are starting a new flow, so context must be provided
     if command is None:
         if not context or not isinstance(context, dict):
             raise ValueError("Missing or invalid context dictionary")
 
         topic = context.get("topic")
-        if not isinstance(topic, str):
+        if not isinstance(topic, str) or not topic.strip():
             raise ValueError("Missing or invalid 'topic' in context")
 
-        initial_state: QuizState = {"topic": topic, "deployment": "Ethel_o4_mini"}
+        # IMPORTANT: tenant must be in context (flows currently only get `context`)
+        tenant = context.get("tenant")
+        if not isinstance(tenant, str) or not tenant.strip():
+            raise ValueError("Missing or invalid 'tenant' in context")
+
+        inference_class = context.get("inference_class", "reasoning")
+        if not isinstance(inference_class, str) or not inference_class.strip():
+            raise ValueError("Missing or invalid 'inference_class' in context")
+
+        # Optional overrides
+        deployment = context.get("deployment")
+        reasoning_effort = context.get("reasoning_effort")
+
+        initial_state: QuizState = {
+            "topic": topic,
+            "tenant": tenant,
+            "inference_class": inference_class,
+            "stream": bool(stream),
+        }
+        if deployment:
+            initial_state["deployment"] = deployment
+        if reasoning_effort:
+            initial_state["reasoning_effort"] = reasoning_effort
 
     workflow = StateGraph(QuizState)
 
@@ -67,10 +105,13 @@ async def run(
 
     workflow.add_node(
         "prepare_quiz",
-        reasoning_node(
+        _reasoning_node(
+            tenant_key="tenant",
+            inference_class_key="inference_class",
+            deployment_key="deployment",
             prompt_key="topic_prompt",
-            reasoning_effort_key=None,
-            stream_key=None,
+            reasoning_effort_key="reasoning_effort",
+            stream_key="stream",
             output_key="question",
         ),
     )
@@ -100,10 +141,13 @@ async def run(
 
     workflow.add_node(
         "feedback",
-        reasoning_node(
+        _reasoning_node(
+            tenant_key="tenant",
+            inference_class_key="inference_class",
+            deployment_key="deployment",
             prompt_key="feedback_prompt",
-            reasoning_effort_key=None,
-            stream_key=None,
+            reasoning_effort_key="reasoning_effort",
+            stream_key="stream",
             output_key="feedback",
         ),
     )
@@ -122,17 +166,16 @@ async def run(
         "configurable": {"thread_id": str(thread_id)},
     }
 
-    # If we are resuming the flow with a command (because an interrupt has been handled by the user),
-    # we use the command as the input to the flow. Otherwise, we start with the initial state.
+    # If we are resuming the flow with a command, we use the command as the input.
+    # Otherwise, we start with the initial state.
     input: QuizState | Command = command if command is not None else initial_state
 
     if command is not None:
-        logger.info(
-            f"Resuming flow {FLOW_NAME} for run_id: {thread_id}, with command: {command}"
-        )
+        logger.info(f"Resuming flow {FLOW_NAME} for run_id: {thread_id}, with command: {command}")
+
     if stream:
         async for event in app.astream_events(input, config=config, version="v2"):
             yield str(event)
-
     else:
         yield await app.ainvoke(input, config=config)
+

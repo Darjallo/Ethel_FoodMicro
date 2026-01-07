@@ -18,6 +18,11 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "ethelflow.agents.store_vectors"]
           env:
+            # Model catalog mount location (used to resolve tenant/space -> store table, etc.)
+            - name: ETHELFLOW_MODEL_CATALOG_PATH
+              value: /etc/ethelflow/catalog.yaml
+
+            # Postgres connection (store-vectors persists embeddings)
             - name: ETHELFLOW_POSTGRES_HOST
               value: postgres
             - name: ETHELFLOW_POSTGRES_PORT
@@ -37,6 +42,19 @@ spec:
                 secretKeyRef:
                   name: postgres-secret
                   key: POSTGRES_PASSWORD
+
+          volumeMounts:
+            - name: model-catalog
+              mountPath: /etc/ethelflow
+              readOnly: true
+
+      volumes:
+        - name: model-catalog
+          configMap:
+            name: ethelflow-model-catalog
+            items:
+              - key: catalog.yaml
+                path: catalog.yaml
 ---
 apiVersion: v1
 kind: Service
@@ -50,3 +68,4 @@ spec:
       port: 8000
       targetPort: 8000
   type: ClusterIP
+

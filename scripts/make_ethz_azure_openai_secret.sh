@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUTPUT_PATH="../k8s/azure-openai-secrets.yaml"
-SECRET_NAME="azure-openai-secrets"
+OUTPUT_PATH="../k8s/ethz-azure-openai-secrets.yaml"
+SECRET_NAME="ethz-azure-openai-secrets"
 
 API_KEY="${1:-}"
 
@@ -27,4 +27,4 @@ data:
 EOF
 
 echo "Secret manifest written to ${OUTPUT_PATH}"
-echo "!!! Do not commit it. !!!"
+echo "!!! Do not commit it. Make sure filename ends on -secrets.yaml !!!"

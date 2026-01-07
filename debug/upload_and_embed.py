@@ -74,7 +74,7 @@ def run_flow_sync(
     client: httpx.Client,
     flow: str,
     context: Dict[str, Any],
-    tenant: str = "debug",
+    tenant: str = "ethz",
 ) -> Any:
     body = {
         "flow": flow,
@@ -95,7 +95,7 @@ def start_flow_async(
     client: httpx.Client,
     flow: str,
     context: Dict[str, Any],
-    tenant: str = "debug",
+    tenant: str = "ethz",
 ) -> str:
     body = {
         "flow": flow,
@@ -136,14 +136,14 @@ def main() -> None:
 
     # Logical path controls
     ap.add_argument("--asset-path", default=None, help="Full logical path, e.g. /ethz/physics/mechanics/demo/x.pdf")
-    ap.add_argument("--tenant", default="debug", help="Logical tenant for /assets path (default: debug)")
+    ap.add_argument("--tenant", default="ethz", help="Logical tenant for /assets path (default: ethz)")
     ap.add_argument("--collection", default="physics", help="Logical collection for /assets path (default: physics)")
     ap.add_argument("--subdir", default=f"uploads/_run_{now_tag()}", help="Subdir under collection (default: unique run dir)")
 
     ap.add_argument("--title", default=None, help="Document title (default: filename stem)")
     ap.add_argument("--method", default="recursive_char_1000_100_htmlstrip", help="Chunking method label")
     ap.add_argument("--flow", default="e2e_embedding", help="Flow name under ethelflow.flows (default: e2e_embedding)")
-    ap.add_argument("--flow-tenant", default="debug", help="Tenant string to send in FlowRequest (default: debug)")
+    ap.add_argument("--flow-tenant", default="ethz", help="Tenant string to send in FlowRequest (default: ethz)")
     ap.add_argument("--async-flow", action="store_true", help="Use /flow/start + status polling")
     ap.add_argument("--insecure", action="store_true", help="Disable TLS verify (only for self-signed https)")
     ap.add_argument("--no-overwrite", action="store_true", help="Set overwrite=false on upload")

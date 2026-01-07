@@ -8,5 +8,4 @@ __pycache__
 *.pem
 *.key
 *.pdf
-
-k8s/azure-openai-secrets.yaml
+*-secrets.yaml

@@ -10,7 +10,9 @@ import urllib.error
 import urllib.request
 from typing import Optional, Tuple, Dict, Any
 
-UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 INTERRUPT_ID_RE = re.compile(r"id='([0-9a-fA-F]+)'")
 INTERRUPT_VALUE_RE = re.compile(
@@ -118,16 +120,42 @@ def main() -> int:
     ap.add_argument("topic", help="Quiz topic (e.g., Multiplication)")
     ap.add_argument("--base-url", default="http://localhost:8080", help="EthelFlow base URL")
     ap.add_argument("--tenant", default="ethz", help="Tenant")
-    ap.add_argument("--deployment", default="Ethel_o4_mini", help="Deployment hint (may be ignored by flow)")
+    ap.add_argument(
+        "--inference-class",
+        default="reasoning",
+        help="Inference class (default: reasoning)",
+    )
+    ap.add_argument(
+        "--deployment",
+        default=None,
+        help="Optional deployment override (if omitted, tenant routing decides)",
+    )
+    ap.add_argument(
+        "--reasoning-effort",
+        default=None,
+        help="Optional reasoning effort hint (e.g., low/medium/high)",
+    )
     args = ap.parse_args()
 
     base = args.base_url.rstrip("/")
 
     start_url = base + "/flow"
+
+    # IMPORTANT: flows currently only get `context`, so tenant & routing must be inside context.
+    ctx: Dict[str, Any] = {
+        "topic": args.topic,
+        "tenant": args.tenant,
+        "inference_class": args.inference_class,
+    }
+    if args.deployment:
+        ctx["deployment"] = args.deployment
+    if args.reasoning_effort:
+        ctx["reasoning_effort"] = args.reasoning_effort
+
     start_payload = {
         "flow": "quiz",
-        "tenant": args.tenant,
-        "context": {"topic": args.topic, "deployment": args.deployment},
+        "tenant": args.tenant,   # keep top-level too
+        "context": ctx,
         "stream": True,
     }
 
