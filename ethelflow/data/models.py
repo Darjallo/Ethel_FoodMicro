@@ -49,38 +49,28 @@ class Asset(SQLModel, table=True):
         sa_column=Column(sa.DateTime(), nullable=False, server_default=sa_text("now()")),
     )
 
-    # Indexes / constraints as per migration:
     __table_args__ = (
         Index("ix_assets_tenant_collection", "tenant", "collection"),
         Index("ix_assets_path", "tenant", "collection", "subpath", "filename"),
-        sa.UniqueConstraint(
-            "tenant", "collection", "subpath", "filename", name="uq_assets_path"
-        ),
+        sa.UniqueConstraint("tenant", "collection", "subpath", "filename", name="uq_assets_path"),
     )
 
-    # --- IMPORTANT: disambiguate the two FK paths between assets and etheldocuments ---
-
-    # "all versions" (etheldocuments.asset_id -> assets.id)
     documents: List["EthelDocument"] = Relationship(
         back_populates="asset",
         sa_relationship_kwargs={"foreign_keys": "[EthelDocument.asset_id]"},
     )
 
-    # "latest pointer" (assets.latest_document_id -> etheldocuments.id)
     latest_document: Optional["EthelDocument"] = Relationship(
         sa_relationship_kwargs={
             "foreign_keys": "[Asset.latest_document_id]",
-            "post_update": True,   # <- critical for the FK cycle
-            },
+            "post_update": True,
+        },
     )
 
 
 class EthelDocument(SQLModel, table=True):
     """
     One concrete stored version of an asset.
-
-    Each overwrite of the same logical path creates a new `EthelDocument` row
-    (new UUID), while `assets.latest_document_id` is updated to point to it.
     """
     __tablename__ = "etheldocuments"
 
@@ -89,32 +79,24 @@ class EthelDocument(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
 
-    # Link back to the logical asset path
     asset_id: uuid.UUID = Field(foreign_key="assets.id", nullable=False, index=True)
-
-    # Monotonic version number per asset (1, 2, 3, ...)
     version: int = Field(nullable=False, default=1)
 
-    # Keep existing metadata (matches prior schema; still useful for UI)
     title: str
-    created_at: datetime.datetime = Field(
-        default_factory=datetime.datetime.now, nullable=False
-    )
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.now, nullable=False)
+
     content_type: str = Field(
         default="application/octet-stream",
         nullable=False,
         sa_column_kwargs={"server_default": "application/octet-stream"},
     )
 
-    # Disambiguate which FK defines this relationship:
     asset: Asset = Relationship(
         back_populates="documents",
         sa_relationship_kwargs={"foreign_keys": "[EthelDocument.asset_id]"},
     )
 
-    text_versions: List["DocumentText"] = Relationship(
-        back_populates="document", cascade_delete=True
-    )
+    text_versions: List["DocumentText"] = Relationship(back_populates="document", cascade_delete=True)
 
 
 class DocumentText(SQLModel, table=True):
@@ -139,7 +121,7 @@ class DocumentText(SQLModel, table=True):
         index=True,
     )
 
-    extractor: str = Field(nullable=False)  # e.g. "ocr", "bs4", "pdfminer"
+    extractor: str = Field(nullable=False)
     text: Optional[str] = Field(default=None, sa_column=Column(sa.Text))
 
     created_at: datetime.datetime = Field(
@@ -148,17 +130,11 @@ class DocumentText(SQLModel, table=True):
     )
 
     __table_args__ = (
-        sa.UniqueConstraint(
-            "document_id",
-            "extractor",
-            name="uq_document_texts_document_id_extractor",
-        ),
+        sa.UniqueConstraint("document_id", "extractor", name="uq_document_texts_document_id_extractor"),
     )
 
     document: EthelDocument = Relationship(back_populates="text_versions")
-    chunk_sets: List["ChunkSet"] = Relationship(
-        back_populates="text_version", cascade_delete=True
-    )
+    chunk_sets: List["ChunkSet"] = Relationship(back_populates="text_version", cascade_delete=True)
 
 
 class ChunkSet(SQLModel, table=True):
@@ -176,13 +152,20 @@ class ChunkSet(SQLModel, table=True):
         ondelete="CASCADE",
     )
 
-    method: str  # e.g. "sliding_window_500", "semantic", "by_paragraph"
-    created_at: Optional[str] = Field(default=None)
+    method: str  # e.g. "recursive_char_1000_100_htmlstrip"
+
+    # IMPORTANT: must match DB: timestamp NOT NULL DEFAULT now()
+    created_at: datetime.datetime = Field(
+        default_factory=datetime.datetime.now,
+        sa_column=Column(sa.DateTime(), nullable=False, server_default=sa_text("now()")),
+    )
+
+    __table_args__ = (
+        sa.UniqueConstraint("text_id", "method", name="uq_chunksets_text_id_method"),
+    )
 
     text_version: DocumentText = Relationship(back_populates="chunk_sets")
-    chunks: List["Chunk"] = Relationship(
-        back_populates="chunk_set", cascade_delete=True
-    )
+    chunks: List["Chunk"] = Relationship(back_populates="chunk_set", cascade_delete=True)
 
 
 class Chunk(SQLModel, table=True):
@@ -193,13 +176,18 @@ class Chunk(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
     chunk_set_id: uuid.UUID = Field(
-        foreign_key="chunksets.id", nullable=False, index=True, ondelete="CASCADE"
+        foreign_key="chunksets.id",
+        nullable=False,
+        index=True,
+        ondelete="CASCADE",
     )
     text: str
     position: int
 
     chunk_set: ChunkSet = Relationship(back_populates="chunks")
 
+
+# --- Legacy (still present in codebase; not used by the new catalog-driven embedding tables) ---
 
 class EmbeddingModel(SQLModel, table=True):
     __tablename__ = "embedding_models"
@@ -208,9 +196,9 @@ class EmbeddingModel(SQLModel, table=True):
         default_factory=uuid.uuid4,
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
-    name: str  # e.g. "text-embedding-3-large"
+    name: str
     dimension: int
-    table_name: str  # actual embedding table to use (managed separately)
+    table_name: str
 
 
 class TextEmbedding3LargeEmbedding(SQLModel, table=True):
@@ -221,7 +209,10 @@ class TextEmbedding3LargeEmbedding(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
     chunk_id: uuid.UUID = Field(
-        foreign_key="chunks.id", nullable=False, index=True, ondelete="CASCADE"
+        foreign_key="chunks.id",
+        nullable=False,
+        index=True,
+        ondelete="CASCADE",
     )
     vector: List[float] = Field(sa_column=Column(Vector(3072)))
     created_at: Optional[str] = Field(default=None)
@@ -243,7 +234,10 @@ class TextEmbedding3SmallEmbedding(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
     )
     chunk_id: uuid.UUID = Field(
-        foreign_key="chunks.id", nullable=False, index=True, ondelete="CASCADE"
+        foreign_key="chunks.id",
+        nullable=False,
+        index=True,
+        ondelete="CASCADE",
     )
     vector: List[float] = Field(sa_column=Column(Vector(1536)))
     created_at: Optional[str] = Field(default=None)
