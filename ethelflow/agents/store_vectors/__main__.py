@@ -1,25 +1,49 @@
 from __future__ import annotations
 
 import logging
-import os
+import re
+from typing import Dict, Tuple
 
 from fastapi import Depends, FastAPI
+from sqlalchemy import Column, MetaData, Table
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from pgvector.sqlalchemy import Vector
 
 from ethelflow.agents.store_vectors.models import StoreVectorsRequest, StoreVectorsResponse
 from ethelflow.data.db_utils import get_session
-from ethelflow.data.models import TextEmbedding3LargeEmbedding  # keep your existing ORM table
 from ethelflow.model_catalog import ModelCatalog
 
 logger = logging.getLogger("uvicorn.error")
-
 app = FastAPI()
 
-# Minimal registry: catalog store_table -> ORM model
-STORE_TABLE_REGISTRY = {
-    "ada3_large": TextEmbedding3LargeEmbedding,
-    # add more as you create tables/models
-}
+_TABLE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+# Cache constructed SQLAlchemy Table objects per (table_name, dimension)
+_TABLE_CACHE: Dict[Tuple[str, int], Table] = {}
+
+
+def _embedding_table(table_name: str, dim: int) -> Table:
+    """
+    Create a lightweight SQLAlchemy Table definition (no reflection),
+    just enough for inserts with correct pgvector binding.
+    """
+    key = (table_name, dim)
+    if key in _TABLE_CACHE:
+        return _TABLE_CACHE[key]
+
+    md = MetaData()
+    t = Table(
+        table_name,
+        md,
+        Column("chunk_id", PG_UUID(as_uuid=True), primary_key=True, nullable=False),
+        Column("vector", Vector(dim), nullable=False),
+        schema="public",
+    )
+    _TABLE_CACHE[key] = t
+    return t
 
 
 @app.post("/store_vectors", response_model=StoreVectorsResponse)
@@ -27,61 +51,81 @@ async def store_vectors(req: StoreVectorsRequest, session: AsyncSession = Depend
     """
     Store vectors for a tenant's embedding space.
 
-    IMPORTANT: We do NOT look up "EmbeddingModel" in the DB anymore.
-    The catalog is the source of truth for:
-      tenant -> default_space
-      space -> dimension + store.table
+    - Catalog is the source of truth:
+        tenant -> default_space
+        space -> dimension + store.table
+    - One vector per chunk per embedding space table:
+        PRIMARY KEY (chunk_id)
+    - Idempotent: ON CONFLICT(chunk_id) DO UPDATE
     """
     try:
-        catalog = ModelCatalog.load()
-
-        # Back-compat mapping if someone still sends model_name
-        # (optional; remove later)
-        if req.space is None and req.model_name:
-            if req.model_name == "text-embedding-3-large":
-                req.space = "ada3_large"
-
-        route = catalog.tenant_embedding_route(tenant=req.tenant, space=req.space)
-
-        model_cls = STORE_TABLE_REGISTRY.get(route.store_table)
-        if not model_cls:
+        # Basic consistency checks
+        if len(req.chunk_ids) != len(req.embeddings):
             return StoreVectorsResponse(
                 success=False,
-                message=f"Store table {route.store_table!r} not supported by store-vectors service.",
+                message=f"chunk_ids length ({len(req.chunk_ids)}) != embeddings length ({len(req.embeddings)})",
+                num_vectors_stored=0,
+                tenant=req.tenant,
+                space=req.space,
+            )
+
+        catalog = ModelCatalog.load()
+        route = catalog.tenant_embedding_route(tenant=req.tenant, space=req.space)
+
+        table_name = route.store_table
+        if not isinstance(table_name, str) or not _TABLE_IDENT_RE.match(table_name):
+            return StoreVectorsResponse(
+                success=False,
+                message=f"Unsafe/invalid store table name: {table_name!r}",
                 num_vectors_stored=0,
                 tenant=req.tenant,
                 space=route.space,
-                store_table=route.store_table,
+                store_table=table_name,
             )
 
-        # Dimension sanity check (helps catch tenant/space mistakes immediately)
-        for v in req.embeddings:
+        # Dimension sanity check
+        for i, v in enumerate(req.embeddings):
             if len(v) != route.dimension:
                 return StoreVectorsResponse(
                     success=False,
-                    message=f"Vector dimension mismatch: got {len(v)} expected {route.dimension} for space={route.space}",
+                    message=f"Vector dimension mismatch at i={i}: got {len(v)} expected {route.dimension} for space={route.space}",
                     num_vectors_stored=0,
                     tenant=req.tenant,
                     space=route.space,
-                    store_table=route.store_table,
+                    store_table=table_name,
                 )
 
-        new_rows = [model_cls(chunk_id=cid, vector=vec) for cid, vec in zip(req.chunk_ids, req.embeddings)]
-        session.add_all(new_rows)
+        t = _embedding_table(table_name, route.dimension)
+
+        rows = [{"chunk_id": cid, "vector": vec} for cid, vec in zip(req.chunk_ids, req.embeddings)]
+
+        stmt = pg_insert(t).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[t.c.chunk_id],
+            set_={"vector": stmt.excluded.vector},
+        )
+
+        await session.execute(stmt)
         await session.commit()
 
         return StoreVectorsResponse(
             success=True,
-            num_vectors_stored=len(new_rows),
+            num_vectors_stored=len(rows),
             tenant=req.tenant,
             space=route.space,
-            store_table=route.store_table,
+            store_table=table_name,
         )
 
     except Exception as e:
         await session.rollback()
         logger.exception("store_vectors failed")
-        return StoreVectorsResponse(success=False, message=str(e), num_vectors_stored=0, tenant=req.tenant, space=req.space)
+        return StoreVectorsResponse(
+            success=False,
+            message=str(e),
+            num_vectors_stored=0,
+            tenant=req.tenant,
+            space=req.space,
+        )
 
 
 if __name__ == "__main__":

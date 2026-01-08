@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Optional, TypedDict
+from typing import List, TypedDict
 
 from langgraph.graph import StateGraph
 
@@ -42,8 +42,12 @@ def prepare_for_store_vectors(state: E2EEmbeddingState) -> E2EEmbeddingState:
 async def run(thread_id: uuid.UUID, context=None, stream: bool = False, checkpointer=None, command=None):
     context = context or {}
 
+    tenant = context.get("tenant")
+    if not isinstance(tenant, str) or not tenant.strip():
+        raise ValueError("context['tenant'] is required (non-empty str)")
+
     initial_state: E2EEmbeddingState = {
-        "tenant": context.get("tenant"),  # <-- critical
+        "tenant": tenant,
         "embedding_space": context.get("embedding_space"),  # optional
         "document_id": context.get("document_id"),
         "extractor": context.get("extractor", "file_to_text"),
@@ -61,9 +65,24 @@ async def run(thread_id: uuid.UUID, context=None, stream: bool = False, checkpoi
         output_key="store_text_response",
     )
     chunk_text = chunk_text_node(input_text_key="text", output_key="chunks", chunk_size=1000, chunk_overlap=100)
-    store_chunks = store_chunks_node(text_id_key="text_id", chunks_key="chunks", method_key="method", output_key="store_chunks_response")
-    embedding = embedding_node(input_texts_key="chunks", tenant_key="tenant", space_key="embedding_space", output_key="embeddings")
-    store_vectors = store_vectors_node(embeddings_key="embeddings", chunk_ids_key="chunk_ids", tenant_key="tenant", space_key="embedding_space")
+    store_chunks = store_chunks_node(
+        text_id_key="text_id",
+        chunks_key="chunks",
+        method_key="method",
+        output_key="store_chunks_response",
+    )
+    embedding = embedding_node(
+        input_texts_key="chunks",
+        tenant_key="tenant",
+        space_key="embedding_space",
+        output_key="embeddings",
+    )
+    store_vectors = store_vectors_node(
+        embeddings_key="embeddings",
+        chunk_ids_key="chunk_ids",
+        tenant_key="tenant",
+        space_key="embedding_space",
+    )
 
     workflow.add_node("file_to_text", file_to_text)
     workflow.add_node("store_text", store_text)
