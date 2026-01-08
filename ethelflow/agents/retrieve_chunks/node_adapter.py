@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+from typing import Any, AsyncGenerator, Callable, Dict, List
+import aiohttp
+import uuid
+
+from ethelflow.agents.retrieve_chunks.models import RetrieveChunksRequest, RetrieveChunksResponse
+
+RETRIEVE_CHUNKS_URL: str = "http://retrieve-chunks.default.svc:8000/retrieve_chunks"
+
+
+def _as_uuid(val: Any, field_name: str) -> uuid.UUID:
+    if isinstance(val, uuid.UUID):
+        return val
+    if val is None:
+        raise ValueError(f"{field_name} is required")
+    try:
+        return uuid.UUID(str(val))
+    except Exception as e:
+        raise ValueError(f"Invalid UUID format for {field_name}: {val!r}") from e
+
+
+def retrieve_chunks_node(
+    chunk_ids_key: str = "chunk_ids",
+    tenant_key: str = "tenant",
+    output_key: str = "retrieve_chunks_response",
+    output_texts_key: str = "chunk_texts",
+) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
+    async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+        raw_ids = state.get(chunk_ids_key)
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise ValueError(f"Expected non-empty list for {chunk_ids_key}")
+
+        chunk_ids: List[uuid.UUID] = [_as_uuid(x, f"{chunk_ids_key}[{i}]") for i, x in enumerate(raw_ids)]
+
+        tenant = state.get(tenant_key)
+        if not isinstance(tenant, str) or not tenant.strip():
+            raise ValueError(f"Expected non-empty str for {tenant_key}, got {tenant!r}")
+
+        req = RetrieveChunksRequest(tenant=tenant, chunk_ids=chunk_ids)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                RETRIEVE_CHUNKS_URL,
+                json=req.model_dump(mode="json"),
+                timeout=300,
+            ) as resp:
+                payload = await resp.json()
+                if resp.status != 200:
+                    raise ValueError(f"retrieve_chunks HTTP {resp.status}: {payload}")
+
+        data = RetrieveChunksResponse.model_validate(payload)
+        if not data.success:
+            raise ValueError(f"retrieve_chunks failed: {data.message}")
+
+        # Convenience: list of texts in the returned order
+        texts = [c.text for c in data.chunks]
+
+        yield {
+            output_key: data.model_dump(mode="json"),
+            output_texts_key: texts,
+        }
+
+    return node
+

@@ -31,7 +31,7 @@ NAMESPACE="${NAMESPACE:-default}"
 DOCKERFILE="${DOCKERFILE:-ethelflow.Dockerfile}"
 IMAGE_REPO="${IMAGE_REPO:-ethelflow}"
 TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"
-DEPLOYMENTS="${DEPLOYMENTS:-ethelflow store-chunks store-text store-vectors chunk-text file-to-text embedding reasoning executor}"
+DEPLOYMENTS="${DEPLOYMENTS:-ethelflow store-chunks store-text store-vectors chunk-text file-to-text embedding reasoning executor search-vectors retrieve-chunks}"
 RESTART_ONLY="${RESTART_ONLY:-0}"
 
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
@@ -103,6 +103,4 @@ for d in "${DEPLOY_ARR[@]}"; do
 done
 
 log "Done."
-log "Tip: check pods:"
-echo "  microk8s kubectl -n $NAMESPACE get pods | egrep '$(echo "$DEPLOYMENTS" | tr ' ' '|')' || true"
 
