@@ -43,6 +43,17 @@ data:
     # spaces as *incompatible* unless you explicitly build a bridge/migration.
     #
     # The "dimension" must match what the backend actually returns.
+    #
+    # ************** IMPORTANT ******************
+    # Each embedding needs to have its own database table, corresponding to
+    #  store:
+    #    table: <name_of_table>
+    # After addding a new embedding, from the project root, run
+    # ./update_embedding_dbs.py
+    # This will generate an Alembic revision
+    # Then run
+    # alembic upgrade head
+    # for the table to be established
     embeddings:
       spaces:
         # Example legacy space (commented out)
@@ -55,8 +66,7 @@ data:
         ada3_large:
           dimension: 3072
           store:
-            # Logical store handle. Could be a table name, schema key, or routing name—
-            # depends on how store-vectors is implemented.
+            # The name of the database table for this embedding
             table: ada3_large
           notes: "Text embedding space for current default tenants (3072-d)."
 
