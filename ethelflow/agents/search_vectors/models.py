@@ -7,20 +7,15 @@ from pydantic import BaseModel, Field
 
 
 class SearchVectorsRequest(BaseModel):
-    document_ids: List[uuid.UUID] = Field(..., min_length=1)
-    extractor: str = Field(..., min_length=1)
-    method: str = Field(..., min_length=1)
-
     tenant: str = Field(..., min_length=1)
-    space: Optional[str] = None  # if None, use tenant default from catalog
+    space: Optional[str] = None  # None => tenant default from catalog
 
-    query_embedding: List[float]
-    top_k: int = Field(default=10, ge=1, le=200)
+    document_ids: List[uuid.UUID] = Field(default_factory=list)
+    extractor: str = Field(..., min_length=1)
+    method: str = Field(..., min_length=1)  # chunking method label
 
-
-class SearchHit(BaseModel):
-    chunk_id: uuid.UUID
-    distance: float
+    query_vector: List[float]
+    top_k: int = Field(10, ge=1, le=500)
 
 
 class SearchVectorsResponse(BaseModel):
@@ -31,6 +26,6 @@ class SearchVectorsResponse(BaseModel):
     space: Optional[str] = None
     store_table: Optional[str] = None
 
-    hits: List[SearchHit] = Field(default_factory=list)
-    chunk_ids: List[uuid.UUID] = Field(default_factory=list)  # convenience mirror
+    chunk_ids: List[uuid.UUID] = Field(default_factory=list)
+    distances: List[float] = Field(default_factory=list)
 

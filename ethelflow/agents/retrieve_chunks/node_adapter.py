@@ -9,15 +9,18 @@ from ethelflow.agents.retrieve_chunks.models import RetrieveChunksRequest, Retri
 RETRIEVE_CHUNKS_URL: str = "http://retrieve-chunks.default.svc:8000/retrieve_chunks"
 
 
-def _as_uuid(val: Any, field_name: str) -> uuid.UUID:
-    if isinstance(val, uuid.UUID):
-        return val
-    if val is None:
-        raise ValueError(f"{field_name} is required")
-    try:
-        return uuid.UUID(str(val))
-    except Exception as e:
-        raise ValueError(f"Invalid UUID format for {field_name}: {val!r}") from e
+def _as_uuid_list(xs: Any, field_name: str) -> List[uuid.UUID]:
+    if not isinstance(xs, list):
+        raise ValueError(f"Expected list for {field_name}, got {type(xs)}")
+    out: List[uuid.UUID] = []
+    for x in xs:
+        if isinstance(x, uuid.UUID):
+            out.append(x)
+        elif isinstance(x, str):
+            out.append(uuid.UUID(x))
+        else:
+            raise ValueError(f"Expected UUID|str in {field_name}, got {type(x)}")
+    return out
 
 
 def retrieve_chunks_node(
@@ -27,15 +30,11 @@ def retrieve_chunks_node(
     output_texts_key: str = "chunk_texts",
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
-        raw_ids = state.get(chunk_ids_key)
-        if not isinstance(raw_ids, list) or not raw_ids:
-            raise ValueError(f"Expected non-empty list for {chunk_ids_key}")
-
-        chunk_ids: List[uuid.UUID] = [_as_uuid(x, f"{chunk_ids_key}[{i}]") for i, x in enumerate(raw_ids)]
-
         tenant = state.get(tenant_key)
         if not isinstance(tenant, str) or not tenant.strip():
             raise ValueError(f"Expected non-empty str for {tenant_key}, got {tenant!r}")
+
+        chunk_ids = _as_uuid_list(state.get(chunk_ids_key, []), chunk_ids_key)
 
         req = RetrieveChunksRequest(tenant=tenant, chunk_ids=chunk_ids)
 
@@ -45,20 +44,18 @@ def retrieve_chunks_node(
                 json=req.model_dump(mode="json"),
                 timeout=300,
             ) as resp:
-                payload = await resp.json()
+                payload_text = await resp.text()
                 if resp.status != 200:
-                    raise ValueError(f"retrieve_chunks HTTP {resp.status}: {payload}")
+                    raise ValueError(f"retrieve-chunks HTTP {resp.status}: {payload_text}")
+                payload = await resp.json()
 
         data = RetrieveChunksResponse.model_validate(payload)
         if not data.success:
             raise ValueError(f"retrieve_chunks failed: {data.message}")
 
-        # Convenience: list of texts in the returned order
-        texts = [c.text for c in data.chunks]
-
         yield {
             output_key: data.model_dump(mode="json"),
-            output_texts_key: texts,
+            output_texts_key: list(data.chunk_texts),
         }
 
     return node

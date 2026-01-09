@@ -1,126 +1,162 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from typing import List
 
 import sqlalchemy as sa
-from fastapi import Depends, FastAPI
-from sqlalchemy.dialects import postgresql
+from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text as sa_text
 
-from pgvector.sqlalchemy import Vector
-
-from ethelflow.agents.search_vectors.models import SearchHit, SearchVectorsRequest, SearchVectorsResponse
+from ethelflow.agents.search_vectors.models import SearchVectorsRequest, SearchVectorsResponse
 from ethelflow.data.db_utils import get_session
 from ethelflow.model_catalog import ModelCatalog
 
 logger = logging.getLogger("uvicorn.error")
+
 app = FastAPI()
 
-_TABLE_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def _build_query_sql(table_name: str, dim: int) -> sa.sql.elements.TextClause:
+def _vector_literal(vec: List[float]) -> str:
     """
-    Build SQL that:
-      - restricts to doc_ids + extractor + chunk method
-      - joins chunks to the embedding table
-      - orders by cosine distance
-      - uses halfvec cast automatically for dim > 2000 (matches your indexing strategy)
+    Convert Python floats to a pgvector literal string: [0.1,0.2,...]
+    We'll pass this as a bind param and CAST it in SQL.
     """
-    if dim > 2000:
-        # Must match the halfvec expression index used for high-dimensional HNSW.
-        order_expr = f"(e.vector::halfvec({dim}) <=> ((:qvec::vector({dim}))::halfvec({dim})))"
-    else:
-        # For <=2000 dims, we assume HNSW on vector (vector_cosine_ops) is fine.
-        order_expr = "(e.vector <=> :qvec)"
+    if not vec:
+        raise ValueError("query_vector is empty")
+    for x in vec:
+        if not isinstance(x, (int, float)) or not math.isfinite(float(x)):
+            raise ValueError("query_vector contains non-finite value")
+    return "[" + ",".join(repr(float(x)) for x in vec) + "]"
 
-    sql = f"""
-    SELECT
-      e.chunk_id AS chunk_id,
-      {order_expr} AS distance
-    FROM document_texts dt
-    JOIN chunksets cs ON cs.text_id = dt.id
-    JOIN chunks c ON c.chunk_set_id = cs.id
-    JOIN public.{table_name} e ON e.chunk_id = c.id
-    WHERE dt.document_id = ANY(:document_ids)
-      AND dt.extractor = :extractor
-      AND cs.method = :method
-    ORDER BY distance
-    LIMIT :top_k
-    """
-    return sa.text(sql)
+
+async def _table_exists(session: AsyncSession, table_name: str) -> bool:
+    res = await session.execute(sa_text("SELECT to_regclass(:t)"), {"t": f"public.{table_name}"})
+    return res.scalar_one_or_none() is not None
 
 
 @app.post("/search_vectors", response_model=SearchVectorsResponse)
 async def search_vectors(req: SearchVectorsRequest, session: AsyncSession = Depends(get_session)):
+    """
+    Given document_ids + extractor + chunking method + embedding space and a query vector,
+    return top_k chunk_ids (best matches).
+    """
     try:
         catalog = ModelCatalog.load()
         route = catalog.tenant_embedding_route(tenant=req.tenant, space=req.space)
 
-        table_name = route.store_table
+        # Sanity checks
+        if len(req.query_vector) != route.dimension:
+            return SearchVectorsResponse(
+                success=False,
+                message=(
+                    f"Vector dimension mismatch: got {len(req.query_vector)} "
+                    f"expected {route.dimension} for space={route.space}"
+                ),
+                tenant=req.tenant,
+                space=route.space,
+                store_table=route.store_table,
+            )
+
+        if not req.document_ids:
+            return SearchVectorsResponse(
+                success=True,
+                message="No document_ids provided; returning empty result.",
+                tenant=req.tenant,
+                space=route.space,
+                store_table=route.store_table,
+                chunk_ids=[],
+                distances=[],
+            )
+
+        table = route.store_table
+        if not _SAFE_IDENT_RE.match(table):
+            return SearchVectorsResponse(
+                success=False,
+                message=f"Unsafe embedding table name from catalog: {table!r}",
+                tenant=req.tenant,
+                space=route.space,
+                store_table=table,
+            )
+
+        if not await _table_exists(session, table):
+            return SearchVectorsResponse(
+                success=False,
+                message=(
+                    f"Embedding table {table!r} does not exist in DB "
+                    f"(did you run alembic upgrade head?)"
+                ),
+                tenant=req.tenant,
+                space=route.space,
+                store_table=table,
+            )
+
+        qvec_str = _vector_literal(req.query_vector)
         dim = route.dimension
 
-        if not isinstance(table_name, str) or not _TABLE_IDENT_RE.match(table_name):
-            return SearchVectorsResponse(
-                success=False,
-                message=f"Unsafe/invalid store table name: {table_name!r}",
-                tenant=req.tenant,
-                space=route.space,
-                store_table=table_name,
+        # Avoid PostgreSQL :: casts in SQLAlchemy text() (bind parsing issues).
+        # Still matches your expression index:
+        #   hnsw ((vector::halfvec(dim)) halfvec_cosine_ops)
+        if dim > 2000:
+            order_expr = (
+                f"(CAST(e.vector AS halfvec({dim})) <=> CAST(:qvec AS halfvec({dim})))"
             )
+        else:
+            order_expr = "(e.vector <=> CAST(:qvec AS vector))"
 
-        if len(req.query_embedding) != dim:
-            return SearchVectorsResponse(
-                success=False,
-                message=f"Query embedding dimension mismatch: got {len(req.query_embedding)} expected {dim} for space={route.space}",
-                tenant=req.tenant,
-                space=route.space,
-                store_table=table_name,
-            )
-
-        stmt = _build_query_sql(table_name=table_name, dim=dim)
-
-        # Strong typing for array-of-uuid + vector binding
-        stmt = stmt.bindparams(
-            sa.bindparam(
-                "document_ids",
-                value=req.document_ids,
-                type_=postgresql.ARRAY(postgresql.UUID(as_uuid=True)),
-            ),
-            sa.bindparam("extractor", value=req.extractor),
-            sa.bindparam("method", value=req.method),
-            sa.bindparam("top_k", value=req.top_k, type_=sa.Integer()),
-            sa.bindparam("qvec", value=req.query_embedding, type_=Vector(dim)),
+        sql = sa_text(
+            f"""
+            SELECT
+              e.chunk_id AS chunk_id,
+              {order_expr} AS distance
+            FROM {table} e
+            JOIN chunks c          ON c.id = e.chunk_id
+            JOIN chunksets cs      ON cs.id = c.chunk_set_id
+            JOIN document_texts dt ON dt.id = cs.text_id
+            WHERE dt.document_id = ANY(:doc_ids)
+              AND dt.extractor = :extractor
+              AND cs.method = :method
+            ORDER BY distance ASC
+            LIMIT :k
+            """
         )
 
-        res = await session.execute(stmt)
-        rows = res.fetchall()
+        rows = (
+            await session.execute(
+                sql,
+                {
+                    "qvec": qvec_str,
+                    "doc_ids": req.document_ids,
+                    "extractor": req.extractor,
+                    "method": req.method,
+                    "k": req.top_k,
+                },
+            )
+        ).all()
 
-        hits: List[SearchHit] = [SearchHit(chunk_id=r.chunk_id, distance=float(r.distance)) for r in rows]
-        chunk_ids = [h.chunk_id for h in hits]
+        chunk_ids = [r[0] for r in rows]
+        distances = [float(r[1]) for r in rows]
 
         return SearchVectorsResponse(
             success=True,
             tenant=req.tenant,
             space=route.space,
-            store_table=table_name,
-            hits=hits,
+            store_table=table,
             chunk_ids=chunk_ids,
+            distances=distances,
         )
 
     except Exception as e:
         logger.exception("search_vectors failed")
-        return SearchVectorsResponse(
-            success=False,
-            message=str(e),
-            tenant=req.tenant,
-            space=req.space,
-        )
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
