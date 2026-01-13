@@ -110,7 +110,13 @@ data:
         inference:
           reasoning:
             provider: ethz_azure_openai
-            deployment: Ethel_o4_mini
+            deployment: Ethel_5
+
+          low_latency:
+            provider: ethz_azure_openai
+            deployment: Ethel_5_nano
+
+
 
         # Optional: you could add overrides per class:
         # inference:
