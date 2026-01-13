@@ -25,6 +25,10 @@ EthelFlow’s storage pipeline, at a high level:
    - Embeddings are stored **per embedding space** in dedicated pgvector tables.
    - Which table to use is determined by the **Model Catalog** (tenant + embedding space → dimension + store_table).
 
+5. **Document page images**
+   - `DocumentImageSet` stores a rendered page-image configuration for a specific `(document_id, params_hash)` pair (renderer/dpi/layout/groups).
+   - `DocumentImage` stores each rendered image artifact, including its page list (`pages`) and storage reference (`s3_key`).
+
 Agents implement these steps as independent microservices, but they all depend on the schema and session utilities here.
 
 ---
@@ -40,6 +44,7 @@ Agents implement these steps as independent microservices, but they all depend o
 - `models.py`
   - The canonical SQLModel models for the EthelFlow Postgres schema:
     - `Asset`, `EthelDocument`, `DocumentText`, `ChunkSet`, `Chunk`
+    - `DocumentImageSet`, `DocumentImage`
   - Also includes **legacy** embedding model tables that remain in the DB/codebase.
 
 - `vectors.py` (**legacy / compatibility**)
@@ -134,11 +139,41 @@ Important constraints:
 - `text` (chunk content)
 - `position` (order within the chunk set)
 
+### `DocumentImageSet` (rendered page-image set)
+
+Stores page-image configuration and provenance for a given document version:
+- `document_id` (FK → `etheldocuments.id`)
+- `renderer` (e.g. `pymupdf`)
+- `dpi` (default 150; overrideable)
+- `layout` (default `vertical`)
+- `image_format` (default `png`)
+- `groups` (JSONB grouping spec; explicit page lists/ranges)
+- `params_hash` (stable hash of renderer/dpi/layout/format/groups; used for idempotency)
+- `manifest` (optional JSONB; stores the render manifest/provenance)
+
+Important constraints:
+- Unique constraint on `(document_id, params_hash)` (one set per render configuration per document)
+
+### `DocumentImage` (rendered image artifact)
+
+Stores one image within a `DocumentImageSet`:
+- `image_set_id` (FK → `document_image_sets.id`)
+- `position` (order within the set)
+- `pages` (JSONB explicit page list; e.g. `[2,3]` or `[5,7,8]`)
+- `s3_key` (object storage reference for the image bytes)
+- Optional metadata: `mime_type`, `byte_size`, `width`, `height`
+
+Important constraints:
+- Unique constraint on `(image_set_id, position)`
+
 ### Cascades and deletes
 
 - `DocumentText` → `ChunkSet` → `Chunk` are configured with cascade deletes in ORM relationships.
-- Database-level `ondelete="CASCADE"` is also used on some foreign keys.
-- Replacing chunksets/chunks is typically handled by the `store_chunks` service.
+- `DocumentImageSet` → `DocumentImage` is configured with cascade deletes in ORM relationships.
+- Database-level `ON DELETE CASCADE` is used for:
+  - `document_image_sets.document_id → etheldocuments.id`
+  - `document_images.image_set_id → document_image_sets.id`
+- Note: DB cascades remove rows, but do not delete S3 objects; services should handle blob cleanup.
 
 ---
 
@@ -182,10 +217,12 @@ Most flow-level pipelines follow this DB graph:
 ```
 Asset (logical path)
   └── EthelDocument (version)
-        └── DocumentText (extractor)
-              └── ChunkSet (method)
-                    └── Chunk (position, text)
-                          └── Embedding table for space (chunk_id -> vector)
+        ├── DocumentText (extractor)
+        │     └── ChunkSet (method)
+        │           └── Chunk (position, text)
+        │                 └── Embedding table for space (chunk_id -> vector)
+        └── DocumentImageSet (params_hash)
+              └── DocumentImage (position, pages, s3_key)
 ```
 
 Agent responsibilities:
@@ -265,4 +302,4 @@ This makes the pipeline idempotent and safe to rerun.
 
 - `extractor`: `"file_to_text"` (or other extraction label)
 - `method`: `"recursive_char_1000_100_htmlstrip"` (or other chunking label)
-- `embedding_space`: `None` means “use tenant default from catalog”
+- `embedding_space`: `None` means “use tenant default from catalog"
