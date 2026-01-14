@@ -51,11 +51,12 @@ Build the main service image from the repo root:
 docker build -f ethelflow.Dockerfile -t ethelflow:latest .
 ```
 
-Create the Azure OpenAI key secret manifest:
+Create the Azure OpenAI key secret manifest (in this case for Azure at ETH Zurich, make new scripts for others):
 
 ```bash
-./scripts/make_azure_openai_secret.sh <secret-value>
+./scripts/make_ethz_azure_openai_secret.sh <secret-value>
 ```
+Run this from inside ./scripts
 
 Deploy everything into your cluster:
 
