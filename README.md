@@ -2,6 +2,8 @@
 
 ## Big picture
 
+![Architecture diagram with three layers](overview_ethelflow.png)
+
 EthelFlow is a **LangGraph-based orchestration service** that runs *flows* (small, explicit state machines) which call a set of **agent microservices** (chunking, embeddings, reasoning, code execution, storage/retrieval, etc.). It also provides an **asset store** with:
 
 - **S3-compatible object storage** (MinIO in local k8s) for file bytes

@@ -81,6 +81,9 @@ data:
         reasoning:
           interface: chat_completions
 
+        low_latency:
+          interface: chat_completions
+
         # You can extend later:
         # video_generate:
         #   interface: responses   # or whatever interface your backend uses
