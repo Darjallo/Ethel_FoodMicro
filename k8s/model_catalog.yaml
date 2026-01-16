@@ -117,7 +117,7 @@ data:
 
           low_latency:
             provider: ethz_azure_openai
-            deployment: Ethel_5_nano
+            deployment: Ethel_41_mini
 
 
 

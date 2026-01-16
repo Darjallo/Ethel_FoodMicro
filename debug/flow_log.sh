@@ -21,7 +21,7 @@ NAMESPACE="${NAMESPACE:-default}"
 SINCE="${SINCE:-5m}"
 TAIL="${TAIL:-300}"
 
-DEFAULT_SERVICES="ethelflow reasoning executor \
+DEFAULT_SERVICES="ethelflow reasoning executor intent \
 file-to-text store-text chunk-text store-chunks embedding store-vectors \
 search-vectors retrieve-chunks \
 file-to-images store-images"
