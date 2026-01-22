@@ -1,6 +1,7 @@
 import datetime
 import uuid
 from typing import List, Optional
+from typing import Any, Dict
 
 import sqlalchemy as sa
 from sqlalchemy import text as sa_text
@@ -311,66 +312,49 @@ class DocumentImage(SQLModel, table=True):
     image_set: DocumentImageSet = Relationship(back_populates="images")
 
 
-# --- Legacy (still present in codebase; not used by the new catalog-driven embedding tables) ---
+# --- Pods: opaque, capability-style JSONB storage for API memory/state ---
 
-class EmbeddingModel(SQLModel, table=True):
-    __tablename__ = "embedding_models"
+class Pod(SQLModel, table=True):
+    """
+    Generic JSONB pod storage.
 
-    id: uuid.UUID = Field(
-        default_factory=uuid.uuid4,
-        sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
-    )
-    name: str
-    dimension: int
-    table_name: str
-
-
-class TextEmbedding3LargeEmbedding(SQLModel, table=True):
-    __tablename__ = "embeddings_text_embedding_3_large"
+    - Opaque `id` is the capability handle.
+    - `owner_api` namespaces data (e.g. "chatapi") so APIs don't interfere.
+    - `data` is arbitrary JSON (per-api schema).
+    """
+    __tablename__ = "pods"
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
-        sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, nullable=False),
     )
-    chunk_id: uuid.UUID = Field(
-        foreign_key="chunks.id",
-        nullable=False,
-        index=True,
-        ondelete="CASCADE",
+
+    tenant: str = Field(nullable=False, index=True)
+    owner_api: str = Field(nullable=False, index=True)
+    pod_type: str = Field(nullable=False, index=True)  # e.g. "conversation_context"
+
+    end_user_id: Optional[str] = Field(default=None, index=True)
+
+    rev: int = Field(
+        default=1,
+        sa_column=Column(sa.Integer, nullable=False, server_default=sa_text("1")),
     )
-    vector: List[float] = Field(sa_column=Column(Vector(3072)))
-    created_at: Optional[str] = Field(default=None)
+
+    data: Dict[str, Any] = Field(
+        sa_column=Column(JSONB, nullable=False),
+    )
+
+    created_at: datetime.datetime = Field(
+        default_factory=datetime.datetime.now,
+        sa_column=Column(sa.DateTime(), nullable=False, server_default=sa_text("now()")),
+    )
+    updated_at: datetime.datetime = Field(
+        default_factory=datetime.datetime.now,
+        sa_column=Column(sa.DateTime(), nullable=False, server_default=sa_text("now()")),
+    )
 
     __table_args__ = (
-        Index(
-            "embeddings_text_embedding_3_large_vector_idx",
-            text("(vector::halfvec(3072)) halfvec_cosine_ops"),
-            postgresql_using="hnsw",
-        ),
+        Index("ix_pods_tenant_owner", "tenant", "owner_api"),
+        Index("ix_pods_owner_user", "owner_api", "end_user_id"),
+        Index("ix_pods_owner_type", "owner_api", "pod_type"),
     )
-
-
-class TextEmbedding3SmallEmbedding(SQLModel, table=True):
-    __tablename__ = "embeddings_text_embedding_3_small"
-
-    id: uuid.UUID = Field(
-        default_factory=uuid.uuid4,
-        sa_column=Column(PGUUID(as_uuid=True), primary_key=True),
-    )
-    chunk_id: uuid.UUID = Field(
-        foreign_key="chunks.id",
-        nullable=False,
-        index=True,
-        ondelete="CASCADE",
-    )
-    vector: List[float] = Field(sa_column=Column(Vector(1536)))
-    created_at: Optional[str] = Field(default=None)
-
-    __table_args__ = (
-        Index(
-            "embeddings_text_embedding_3_small_vector_idx",
-            text("(vector::halfvec(1536)) halfvec_cosine_ops"),
-            postgresql_using="hnsw",
-        ),
-    )
-

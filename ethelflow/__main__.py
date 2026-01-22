@@ -11,6 +11,8 @@ from ethelflow.routes.assets import router as assets_router
 from ethelflow.routes.flows import router as flows_router
 from ethelflow.settings.postgres_settings import postgres_settings
 
+from ethelflow.apis.chatapi.router import router as chatapi_router
+
 from pathlib import Path
 from fastapi.responses import HTMLResponse
 import markdown
@@ -80,6 +82,9 @@ def readme():
 app.include_router(assets_router)
 app.include_router(flows_router)
 
+# Any APIs go here:
+
+app.include_router(chatapi_router)
 
 if __name__ == "__main__":
     import uvicorn
