@@ -4,336 +4,129 @@
 
 ![Architecture diagram with three layers](overview_ethelflow.png)
 
-EthelFlow is a **LangGraph-based orchestration service** that runs *flows* (small, explicit state machines) which call a set of **agent microservices** (chunking, embeddings, reasoning, code execution, storage/retrieval, etc.). It also provides an **asset store** with:
+EthelFlow is the **runtime and developer toolkit** behind Project Ethel.
 
-- **S3-compatible object storage** (MinIO in local k8s) for file bytes
-- **Postgres metadata + indexing** for versioned documents, extracted text, chunks, and embeddings
+At its core, EthelFlow provides:
 
-At runtime, routing to models is **catalog-driven**:
+- A **LangGraph-based orchestration service** (the `ethelflow` FastAPI app) that runs explicit *flows* (small state machines).
+- A set of **agent microservices** (chunking, embeddings, vector search, reasoning, file-to-text, file-to-images, etc.) that flows call over HTTP.
+- A **versioned asset store** (virtual filesystem) backed by **Postgres metadata** + **S3/MinIO** object storage.
+- A **ChatAPI surface** that looks like the OpenAI API (`/v1/chat/completions`, `/v1/responses`) but is backed by EthelFlow flows and internal state.
+- A **Pod-based state layer** in Postgres for:
+  - **conversation pods** (chat history + per-conversation state)
+  - **environment pods** (course/environment configuration like templates, intent options, and reference document sets), designed to “follow latest”.
 
-- A **model catalog YAML** defines **providers**, **tenants**, embedding **spaces**, and inference **classes**
-- Flows and agents pass `tenant` (and optionally `embedding_space` / `inference_class`) so the system can pick the right provider/deployment and storage tables.
+Model/provider routing is **catalog-driven**:
+
+- A model catalog YAML defines **tenants**, embedding **spaces**, inference **classes**, and provider/deployment wiring.
+- Flows and agents route primarily on `tenant` (and optional hints like `embedding_space` / `inference_class`).
+
+If you are new to the codebase, start with:
+- `ethelflow/ethelflow/README.md` — the main service internals and APIs
+- `ethelflow/ethelflow/apis/README.md` — API surfaces (ChatAPI/Admin/Common) and how to add new ones
+- `ethelflow/ethelflow/data/README.md` — database schema and storage layer
+
+---
+
+## What is being built here
+
+This repo is building a **multi-tenant, Kubernetes-native retrieval + orchestration platform** for education-focused AI experiences.
+
+The intended pattern is:
+
+1. **Ingest & version content** into the assets store (`/assets`).
+2. **Process content** via agent pipelines (extract → chunk → embed → store vectors).
+3. **Serve experiences** through:
+   - **Flows API** (developer-oriented orchestration runs)
+   - **ChatAPI** (OpenAI-compatible entry point for “oblivious” clients like LMS/LTI integrations)
+4. **Configure environments** (course templates, references, intent definitions) via **environment pods** (Admin API today; authz later).
 
 ---
 
 ## Repository structure (high level)
 
-- `ethelflow/` — the main FastAPI service (routes, flows, DB models, catalog loader)
-- `ethelflow/agents/` — node adapters + per-agent microservice implementations
-- `k8s/` — Kubernetes manifests (Deployments/Services/ConfigMaps/Secrets)
-- `k8s/model_catalog.yaml` — **source of truth** for embedding spaces + tenant routing (typically packaged as a ConfigMap)
+> This section makes minimal assumptions and only lists directories/files referenced elsewhere in the repo and tooling.
+
+- `ethelflow/`
+  - The Python package and main FastAPI service.
+  - Contains flows, node adapters, DB models/utilities, and API routers.
+
+- `alembic/`
+  - Alembic migration environment and revisions for Postgres schema evolution.
+
+- `k8s/`
+  - Kubernetes manifests for the main service and agent microservices.
+  - Typically includes the model catalog ConfigMap and deployment/service YAML.
+
+- `scripts/`
+  - Helper scripts for local/dev cluster setup (e.g., creating Secrets).
+
+- `debug/`
+  - Developer utilities for running smoke tests, inspecting logs, and iterating locally.
+
+- `overview_ethelflow.png`
+  - Architecture diagram referenced above.
+
+- `ethelflow.Dockerfile`
+  - Container build definition for the main service image.
+
+- `update_embedding_dbs.py` (if present)
+  - Helper script that generates Alembic revisions for catalog-defined embedding tables.
+  - If you use it, treat it as a convenience tool; the source of truth remains migrations + the catalog.
 
 ---
 
-## Development
+## Runtime architecture
 
-Use `uv` for managing the project Python virtual environment.
+In a typical microk8s/minikube deployment you get:
 
-- Upgrading dependencies (respects semver ranges in `requirements.txt`):  
-  `uv pip compile requirements.txt -o requirements_lock.txt --generate-hashes`
-- Creating venv:  
-  `uv venv .venv`
-
----
-
-## Local setup
-
-### Prerequisites
-
-- Container runtime (Docker, etc.) installed and running
-- A local Kubernetes cluster (Docker Desktop, minikube, microk8s, etc.)
-- `kubectl` access to the cluster (or `microk8s kubectl`)
-- Azure OpenAI API key(s) (see model catalog + secrets below)
-
-### Deployment
-
-Build the main service image from the repo root:
-
-```bash
-docker build -f ethelflow.Dockerfile -t ethelflow:latest .
-```
-
-Create the Azure OpenAI key secret manifest (in this case for Azure at ETH Zurich, make new scripts for others):
-
-```bash
-./scripts/make_ethz_azure_openai_secret.sh <secret-value>
-```
-Run this from inside ./scripts
-
-Deploy everything into your cluster:
-
-```bash
-kubectl apply -f k8s/
-```
-
-This typically creates:
-
-- Main `ethelflow` application service
-- Agent services (e.g., `chunk-text`, `embedding`, `executor`, `file-to-text`, `reasoning`, `store-chunks`, `store-vectors`, etc.)
-- PostgreSQL (main application DB) and MinIO (S3-compatible storage)
+- `ethelflow` (FastAPI) — public entry point, orchestration, assets, chat-style API
+- `postgres` — metadata DB, checkpoints, pods, chunks, etc.
+- `minio` — S3-compatible object storage for document bytes and derived artifacts
+- Agent services — independent Deployments (embedding, reasoning, search-vectors, store-vectors, file-to-text, chunk-text, retrieve-chunks, …)
 
 ---
 
-## Usage (port-forwarding)
+## Extending the system
 
-Expose services to `localhost`:
+### Adding a new API surface
 
-```bash
-kubectl port-forward svc/ethelflow 8080:8080
-kubectl port-forward svc/postgres 5432:5432
-```
+Create a new package under `ethelflow/ethelflow/apis/<your_api>/` and follow the existing pattern:
 
-Optionally, port-forward an agent directly if you want to test it in isolation:
+- Define a `router.py` with an `APIRouter(prefix=..., tags=[...])`.
+- Use shared dependencies from `ethelflow/ethelflow/apis/common/deps.py`:
+  - `get_checkpointer()` if you run flows
+  - `get_pod_store()` if you store state/config in pods
+- Register the router in `ethelflow/ethelflow/__main__.py`.
 
-```bash
-kubectl port-forward svc/executor 8000:8000
-# adjust service name/port for other agents
-```
+If your API needs “environment-like” configuration (templates, references, per-course settings), store it in an **environment pod** rather than hard-coding it into clients:
+- Key environments by `(owner_api, tenant, env_type, env_id)` and store schema-less JSON under `config`.
+- Keep routing logic in the API small; let flows interpret the environment config they care about.
 
-Open:
+### Adding a new flow
 
-- Swagger UI: `http://localhost:8080/docs`
-- Rendered service README: `http://localhost:8080/`
+Add a module under `ethelflow/ethelflow/flows/` with a `run(...)` entry point (see `ethelflow/ethelflow/README.md` and `ethelflow/ethelflow/flows/README.md` if present).
 
----
+Guidelines:
+- Treat `tenant` as a required routing input.
+- Keep the flow state JSON-serializable (UUIDs as strings across service boundaries).
+- Prefer node adapters in `ethelflow/ethelflow/agents/*/node_adapter.py` to call services.
 
-## Calling the main service
+### Adding a new agent microservice
 
-### Run a flow (single request)
+Agents typically have:
+- a FastAPI service (HTTP interface)
+- a node adapter used by flows to call it
+- a k8s Deployment/Service definition
 
-`POST /flow` runs the flow and returns either the first output (non-streaming) or a streaming response (streaming mode).
-
-Example:
-
-```bash
-curl -X POST "http://localhost:8080/flow" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "flow": "rag_chat",
-    "tenant": "ethz",
-    "context": {
-      "prompt": "Summarize the key idea.",
-      "document_ids": ["8fba5e0d-f076-4688-aa62-d2321dc0b871"],
-      "top_k": 8
-    },
-    "stream": false
-  }'
-```
-
-### Start/attach/continue flows (interactive runs)
-
-Some flows may **interrupt** and require input later (LangGraph `interrupt(...)` + checkpointer).
-
-1) Start the flow:
-
-```bash
-curl -X POST "http://localhost:8080/flow/start" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "flow": "quiz",
-    "tenant": "ethz",
-    "context": {"topic": "Gauss\u0027s law"},
-    "stream": true
-  }'
-```
-
-Response includes a `run_id`.
-
-2) Attach via SSE:
-
-```bash
-curl -N "http://localhost:8080/flow/<run_id>/attach"
-```
-
-3) Continue after an interrupt:
-
-```bash
-curl -X POST "http://localhost:8080/flow/<run_id>/continue" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "data": "My answer goes here",
-    "stream": false
-  }'
-```
-
-(Exact continuation payload depends on how the flow calls `interrupt(...)`.)
+Keep the node adapter contract stable and documented; flows should depend on the adapter, not on raw HTTP details.
 
 ---
 
-## Assets API (upload/download/versioning)
+## Development notes
 
-EthelFlow exposes a **logical, versioned filesystem** under `/{tenant}/{collection}/{subpath...}/{filename}`.
+- Kubernetes is the intended runtime (microk8s is a common dev setup).
+- Database schema changes should go through Alembic (`alembic revision …`, `alembic upgrade head`).
+- The model catalog is mounted into each service and provides tenant-aware routing (providers, spaces, inference classes). Secrets (API keys) live in environment variables / Kubernetes Secrets, not in git.
 
-- Upload creates a new version unless you request an explicit version like `foo.2.pdf`
-- The bytes are stored in S3/MinIO under a UUID key
-- Postgres stores `assets` and `etheldocuments` metadata; `assets.latest_document_id` points to the newest version
-
-### Upload
-
-`POST /assets?path=/tenant/collection/.../file.pdf`
-
-```bash
-curl -X POST "http://localhost:8080/assets?path=/ethz/physics/mechanics/angular.pdf" \
-  -F "file=@angular.pdf"
-```
-
-### Download latest
-
-```bash
-curl -L "http://localhost:8080/assets?path=/ethz/physics/mechanics/angular.pdf" -o angular.pdf
-```
-
-### Download a specific version
-
-```bash
-curl -L "http://localhost:8080/assets?path=/ethz/physics/mechanics/angular.2.pdf" -o angular.2.pdf
-```
-
-### List directories
-
-```bash
-curl "http://localhost:8080/assets/ls?path=/ethz/physics"
-```
-
----
-
-## Model catalog + tenant routing
-
-### What the model catalog does
-
-The model catalog YAML is the **contract** that ties together:
-
-- **Tenants** (e.g., `ethz`)
-- **Embedding spaces** (dimension + DB table where vectors are stored)
-- **Inference classes** (e.g., `"reasoning"`) and the provider/deployment to use per tenant
-- **Providers** (endpoint + “kind”), with API keys supplied via environment variables/secrets (not stored in the YAML)
-
-In the running cluster, the catalog is typically mounted into each service at:
-
-- `/etc/ethelflow/catalog.yaml`
-
-and pointed to by:
-
-- `ETHELFLOW_MODEL_CATALOG_PATH=/etc/ethelflow/catalog.yaml`
-
-Flows (and most agents) must include **`tenant`** in the state/context so routing works.
-
----
-
-## Updating embedding tables (from the model catalog)
-
-Embedding storage is **catalog-driven**: each embedding space declares a `store.table` name.
-When you add a new embedding space (or change the table name), you must ensure Postgres has the matching table + vector index.
-
-This repo includes:
-
-- `update_embedding_dbs.py` — generates an Alembic revision that creates any *missing* embedding tables from the catalog.
-
-### When do you need this?
-
-Run it when:
-
-- You add a new embedding space to `k8s/model_catalog.yaml` (`embeddings.spaces.*`)
-- You change `store.table` for an existing space
-- You want to switch indexing strategy (HNSW vs IVFFlat) for newly created tables
-
-### What the script does
-
-`update_embedding_dbs.py`:
-
-1. Reads the catalog from `k8s/model_catalog.yaml`  
-   (supports both “raw catalog.yaml” and “ConfigMap-wrapped” YAML containing `data: { catalog.yaml: ... }`)
-
-2. Extracts each embedding space tuple: `(space_name, dimension, store.table)`
-
-3. Connects to Postgres (unless `--no-db-check`) and checks whether each table exists
-
-4. Generates a **new Alembic revision** to create missing tables + indexes
-   - Always ensures `CREATE EXTENSION IF NOT EXISTS vector`
-   - Index strategy:
-     - `dimension <= 2000`: normal pgvector ANN opclasses on `vector`
-     - `dimension > 2000`: expression index using `vector::halfvec(dim)` with `halfvec_*_ops`
-       (workaround for ANN index dimensionality limits)
-
-### Typical workflow
-
-1) Edit `k8s/model_catalog.yaml` and add or modify an embedding space, e.g.:
-
-```yaml
-embeddings:
-  spaces:
-    ada3_large:
-      dimension: 3072
-      store:
-        table: embeddings_ada3_large
-```
-
-2) Ensure Postgres is reachable. If you’re running locally:
-
-```bash
-kubectl port-forward -n default svc/postgres 5432:5432
-```
-
-3) Generate the Alembic revision:
-
-```bash
-./update_embedding_dbs.py
-```
-
-Optional flags:
-
-- Use a specific host/port:
-  ```bash
-  ./update_embedding_dbs.py --host localhost --port 5432
-  ```
-- Choose index kind:
-  ```bash
-  ./update_embedding_dbs.py --index hnsw
-  ./update_embedding_dbs.py --index ivfflat --lists 200
-  ./update_embedding_dbs.py --index none
-  ```
-- Choose distance metric:
-  ```bash
-  ./update_embedding_dbs.py --distance cosine
-  ./update_embedding_dbs.py --distance l2
-  ```
-- Skip DB existence checks (generate for all catalog spaces):
-  ```bash
-  ./update_embedding_dbs.py --no-db-check
-  ```
-
-4) Review the generated revision file under the Alembic versions directory, then apply:
-
-```bash
-alembic upgrade head
-```
-
-### How DB credentials are discovered
-
-The script uses (in order):
-
-1. `--database-url` or `DATABASE_URL`
-2. `ETHELFLOW_POSTGRES_*` / `POSTGRES_*` environment variables
-3. Otherwise it tries to read a Kubernetes Secret (defaults: `-n default secret/postgres-secret`)
-   - keys: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
-
-If Postgres is not reachable, it prints a port-forward hint and exits.
-
----
-
-## Notes for developers
-
-- **Flows** are orchestration: they wire node adapters together and must pass routing keys (`tenant`, optional `embedding_space`, optional `inference_class`).
-- **Agents** do the work: chunking, embeddings, reasoning, storage, retrieval. Most are deployed as separate k8s Services.
-- **Embedding tables** are not “static schema”: they are derived from the catalog, so keep Alembic + the catalog in sync.
-
----
-
-## Alembic migrations (general)
-
-The embedding-table generator produces an Alembic revision. Beyond that, normal schema changes follow standard Alembic workflows:
-
-```bash
-alembic revision -m "..."
-alembic upgrade head
-```
+For concrete usage and endpoints, see the per-package READMEs in `ethelflow/ethelflow/`.
