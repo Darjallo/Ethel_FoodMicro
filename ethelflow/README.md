@@ -1,24 +1,3 @@
-```txt
-Project Ethel
-
-Copyright (C) 2025 ETH Zurich
-
-   This program is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, either version 3 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program.  If not, see <https://www.gnu.org/licenses/>.
-```
-
-When running locally, open `http://localhost:8080/docs` for the interactive Swagger UI and full endpoint documentation.
-
 # EthelFlow (service)
 
 ## Big picture
@@ -27,12 +6,14 @@ When running locally, open `http://localhost:8080/docs` for the interactive Swag
 
 - **Assets API** (`/assets/...`): an app-level, versioned “virtual filesystem” backed by **Postgres metadata** + **S3/MinIO object storage**.
 - **Flows API** (`/flow/...`): a thin execution harness for **LangGraph flows** (state machines) that call out to **agent microservices** (embedding, reasoning, chunking, vector store, etc.) and optionally **pause/resume** via checkpoints.
+- **ChatAPI** (`/v1/...`): an OpenAI-compatible facade (`/v1/chat/completions`, `/v1/responses`) that persists conversation state in **PODs** (Postgres-stored JSON blobs) so *memoryless* clients can interact with stateful flows.
 - **Tenant-aware model routing** via `model_catalog.yaml`: model deployments, embedding spaces, and vector store tables are chosen based on `tenant` (and optional routing hints like `embedding_space` or `inference_class`).
 
 If you are developing:
 - **Flows**: see `ethelflow/flows/README.md` (how to write new flows systematically).
 - **Agent services / adapters**: see `ethelflow/agents/README.md`.
 - **DB models / storage**: see `ethelflow/data/README.md`.
+- **APIs (ChatAPI/Admin/Common)**: see `ethelflow/apis/README.md`.
 
 ---
 
@@ -40,10 +21,14 @@ If you are developing:
 
 - `__main__.py` — FastAPI app, startup/shutdown, routers, and “render README as HTML” landing page.
 - `routes/` — HTTP API routes (`assets.py`, `flows.py`).
+- `apis/` — additional API surfaces:
+  - `chatapi/` OpenAI-compatible facade that maps requests into flows and persists POD state
+  - `admin/` environment management endpoints (schema-less config stored in environment PODs)
+  - `common/` shared FastAPI dependencies (checkpointer + pod store)
 - `flows/` — LangGraph flow modules (mostly debugging/testing flows).
 - `agents/` — “node adapters” and microservice implementations (one service per agent).
 - `model_catalog.py` — catalog loader + tenant routing helpers for embedding/inference.
-- `data/` — SQLAlchemy/SQLModel models and DB utilities.
+- `data/` — SQLAlchemy/SQLModel models and DB utilities (including POD storage).
 - `assets/` — async S3 client wrapper used by routes and agents.
 - `settings/` — environment-driven configuration (Postgres, S3, legacy Azure settings).
 
@@ -56,7 +41,7 @@ If you are developing:
 - FastAPI app lifecycle
 - LangGraph checkpointer initialization (Postgres-backed)
 - S3 client initialization (MinIO/S3 compatible)
-- Route mounting: `assets_router`, `flows_router`
+- Route mounting: `assets_router`, `flows_router`, plus routers from `ethelflow/apis/*`
 - `/` endpoint: renders this README as HTML
 
 ### Checkpointer initialization (LangGraph)
@@ -134,10 +119,12 @@ Common optional routing hints used by node adapters / flows:
 
 # Routes
 
-EthelFlow exposes two main API surfaces:
+EthelFlow exposes these main API surfaces:
 
 - `/assets` — manage documents (upload/download/list/mkdir/mv/rm) using logical paths
 - `/flow` — execute LangGraph flows (run, start/attach, continue, status/history)
+- `/v1` — OpenAI-compatible Chat API facade (conversation PODs + environment POD merge)
+- `/admin` — environment management endpoints (used to set per-course config)
 
 For canonical request/response shapes, always consult the live Swagger UI:
 `http://localhost:8080/docs`.
@@ -193,8 +180,7 @@ The asset’s base filename used for lookup/storage is normalized back to `angul
 **Upload (multipart):**
 
 ```bash
-curl -X POST "http://localhost:8080/assets?path=/ethz/physics/mechanics/angular.pdf" \
-  -F "file=@angular.pdf"
+curl -X POST "http://localhost:8080/assets?path=/ethz/physics/mechanics/angular.pdf"   -F "file=@angular.pdf"
 ```
 
 **Download latest:**
@@ -295,8 +281,8 @@ This design keeps the HTTP layer small and pushes the “what to yield” respon
 
 ## See also
 
+- `ethelflow/apis/README.md` — ChatAPI/Admin/Common design and POD-based configuration
 - `ethelflow/agents/README.md` — agent services and node adapter contracts
 - `ethelflow/flows/README.md` — how to write flows (inputs/outputs/streaming/interrupts)
 - `ethelflow/routes/README.md` — API usage details and interplay with other system components
 - `ethelflow/data/README.md` — DB schema (assets/text/chunks) and vector storage notes
-

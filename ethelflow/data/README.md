@@ -1,6 +1,6 @@
 # ethelflow/data
 
-This directory is the **data access layer** for EthelFlow services: database session utilities, core SQLModel ORM models, and (legacy) vector helper code.
+This directory is the **data access layer** for EthelFlow services: database session utilities, core SQLModel ORM models, **pod storage** (JSON state), and (legacy) vector helper code.
 
 It is used by multiple agents (FastAPI microservices) via `Depends(get_session)` and by any code that needs to read/write the Postgres schema.
 
@@ -9,6 +9,13 @@ It is used by multiple agents (FastAPI microservices) via `Depends(get_session)`
 ## Overview
 
 EthelFlow’s storage pipeline, at a high level:
+
+0. **Pods (JSON state)**
+   - `Pod` rows store **small JSON blobs** that represent “state” owned by an API (e.g. ChatAPI conversation history) or shared configuration (e.g. a course environment).
+   - Pods are addressed by either:
+     - a random UUID (normal “create then pass back the handle”), or
+     - a deterministic UUIDv5 (“compute the id from semantic keys”) for “find without listing” use-cases (e.g. environment pods).
+   - Pod updates use a simple `rev` counter to support optimistic concurrency.
 
 1. **Assets & documents**
    - `Asset` represents a *logical path* in the virtual filesystem (tenant/collection/subpath/filename).
@@ -45,7 +52,18 @@ Agents implement these steps as independent microservices, but they all depend o
   - The canonical SQLModel models for the EthelFlow Postgres schema:
     - `Asset`, `EthelDocument`, `DocumentText`, `ChunkSet`, `Chunk`
     - `DocumentImageSet`, `DocumentImage`
+    - `Pod` (JSON state storage used by APIs)
   - Also includes **legacy** embedding model tables that remain in the DB/codebase.
+
+- `pods.py`
+  - A small, API-agnostic **pod store** abstraction over the `Pod` table.
+  - Defines:
+    - `PodStore` protocol + `PostgresPodStore` implementation
+    - `deterministic_pod_id(...)` for UUIDv5 ids (see note below)
+    - `PodNotFound`, `PodConflict`
+  - Used by:
+    - `ethelflow/apis/chatapi` to store conversation state (`pod_type="conversation_context"`) and to load “environment pods” each request (“follow latest”)
+    - `ethelflow/apis/admin` to upsert/read environment pods (`pod_type="environment"`)
 
 - `vectors.py` (**legacy / compatibility**)
   - An older helper for “relevant chunk retrieval” using hard-coded assumptions (e.g., fixed dimension = 3072).
@@ -89,6 +107,31 @@ from ethelflow.data.db_utils import get_session_ctx
 async with get_session_ctx() as session:
     ...
 ```
+
+---
+
+## Pods (`pods.py`)
+
+Pods are intentionally **schema-light**: a pod is a row with identifying fields (tenant, owner_api, pod_type, end_user_id) and a JSON `data` payload. This makes them suitable for:
+- conversation/session-like state (e.g., message history)
+- “environment” configuration blobs (course template, reference doc ids, future settings)
+- any other small API-specific state that should live in Postgres and be accessed by multiple services
+
+### Deterministic ids (UUIDv5)
+
+`pods.py` defines:
+
+- `POD_ID_NAMESPACE = uuid.UUID("2f35a5a4-9c2c-4a50-9b86-3f5f6a7c9a01")`
+- `deterministic_pod_id(tenant, owner_api, pod_type, key) -> uuid.UUID`
+
+This is **not a secret**. The constant is only a stable namespace for UUIDv5, so the same semantic keys always map to the same UUID.
+
+**Important:** do not change `POD_ID_NAMESPACE` after it has been committed/deployed, or any deterministic lookups created with the old namespace will no longer work.
+
+### Optimistic concurrency
+
+`PostgresPodStore.update_pod(..., expected_rev=...)` increments `pod.rev` on each update.
+If `expected_rev` is provided and does not match, `PodConflict` is raised. Callers that need “last write wins” can omit `expected_rev`.
 
 ---
 
