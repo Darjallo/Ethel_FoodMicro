@@ -19,57 +19,11 @@ router = APIRouter(prefix="/v1", tags=["ChatAPI"])
 OWNER_API = "chatapi"
 POD_TYPE = "conversation_context"
 
-# NEW: environment pods (follow-latest)
+# environment pods (follow-latest)
 ENV_POD_TYPE = "environment"
 
 DEFAULT_TENANT = "ethz"
 DEFAULT_FLOW = "rag_intent_chat"
-
-
-# NEW: vanilla template (your current mustache becomes the built-in fallback)
-VANILLA_TEMPLATE = """You are a helpful assistant.
-
-{{#history}}
-Conversation so far:
-{{history}}
-{{/history}}
-
-User question:
-{{prompt}}
-
-{{#chunks}}
-Relevant excerpts:
-{{#chunks}}
-[{{n}}]
-{{text}}
-
-{{/chunks}}
-{{/chunks}}
-
-Answer clearly and cite the excerpt numbers when useful.
-"""
-
-
-# NEW: default intent options (mirrors your CLI defaults)
-DEFAULT_INTENT_OPTIONS: Dict[str, Any] = {
-    "version": 1,
-    "default_intent": "chat",
-    "options": {
-        "simulation": {
-            "description": "User wants the system to generate or run a simulation (interactive or computed).",
-            "examples": ["simulate", "model this", "run a simulation", "numerically solve"],
-        },
-        "exercise": {
-            "description": "User wants an interactive exercise/problem (practice, hints, answer checking).",
-            "examples": ["give me an exercise", "quiz me", "practice problems", "check my answer"],
-        },
-        "visualization": {
-            "description": "User wants a visualization (plot/diagram/image).",
-            "examples": ["plot", "visualize", "draw", "show me a graph", "make an image"],
-        },
-    },
-    "confidence_threshold": 0.70,
-}
 
 
 def _strip_debug(ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -90,42 +44,24 @@ def _ensure_thread_id(ctx: Dict[str, Any]) -> uuid.UUID:
     return tid
 
 
-# NEW: make sure the flow has what it expects (fixes your current 500s)
-def _ensure_required_flow_inputs(ctx: Dict[str, Any]) -> None:
-    # messages
-    msgs = ctx.get("messages")
-    if not isinstance(msgs, list):
+def _ensure_base_context(ctx: Dict[str, Any]) -> None:
+    # Keep router generic: only normalize basic container keys.
+    if not isinstance(ctx.get("messages"), list):
         ctx["messages"] = []
-
-    # routing_state
-    rs = ctx.get("routing_state")
-    if not isinstance(rs, dict):
+    if not isinstance(ctx.get("routing_state"), dict):
         ctx["routing_state"] = {}
-
-    # intent_options must be a non-empty JSON object for rag_intent_chat
-    io = ctx.get("intent_options")
-    if not isinstance(io, dict) or not io:
-        ctx["intent_options"] = dict(DEFAULT_INTENT_OPTIONS)
-
-    # rag dict + vanilla template fallback
-    rag = ctx.get("rag")
-    if not isinstance(rag, dict):
-        rag = {}
-        ctx["rag"] = rag
-
-    tmpl = rag.get("template")
-    if not isinstance(tmpl, str) or not tmpl.strip():
-        rag["template"] = VANILLA_TEMPLATE
+    if not isinstance(ctx.get("rag"), dict):
+        ctx["rag"] = {}
+    if not isinstance(ctx.get("debug"), dict):
+        ctx["debug"] = {}
 
 
-# NEW: deterministic env pod id (public, not a secret)
 def _env_pod_id_for_course(*, tenant: str, course_id: str) -> uuid.UUID:
-    # Use a standard namespace; no hardcoded “mystery UUID” required.
+    # Deterministic, not a secret.
     name = f"ethelflow:{OWNER_API}:env:course:{tenant}:{course_id}"
     return uuid.uuid5(uuid.NAMESPACE_URL, name)
 
 
-# NEW: merge environment pod config into the flow context (Option A: follow latest)
 async def _apply_course_environment(
     *,
     pod_store: PodStore,
@@ -146,20 +82,14 @@ async def _apply_course_environment(
     try:
         env_pod = await pod_store.get_pod(pod_id=env_pod_id, tenant=tenant, owner_api=OWNER_API)
     except PodNotFound:
-        # No environment configured: just keep vanilla defaults
         return
 
     data = env_pod.data if isinstance(env_pod.data, dict) else {}
     cfg = data.get("config")
     if not isinstance(cfg, dict):
-        # allow “flat” env pods too
         cfg = data
 
-    # Currently supported (minimal, generalizable):
-    # - cfg.template_text (string) -> ctx.rag.template
-    # - cfg.document_ids (list[str]) -> ctx.rag.document_ids
-    # - cfg.rag (dict) -> merged into ctx.rag
-    # - cfg.intent_options (dict) -> overrides ctx.intent_options
+    # Generic merge: environment can provide template/intents/rag knobs/docs.
     if isinstance(cfg.get("intent_options"), dict) and cfg["intent_options"]:
         ctx["intent_options"] = dict(cfg["intent_options"])
 
@@ -178,7 +108,6 @@ async def _apply_course_environment(
 
     rag_cfg = cfg.get("rag")
     if isinstance(rag_cfg, dict):
-        # keep this permissive; only update keys that are present
         for k, v in rag_cfg.items():
             if v is not None:
                 rag[k] = v
@@ -225,11 +154,9 @@ async def chat_completions(
     tenant = (x_tenant or metadata.get("tenant") or DEFAULT_TENANT).strip()
     end_user_id = req.user or metadata.get("end_user_id") or None
 
-    # NEW: course_id selects environment (follow latest); default is “default”
     course_id = str(metadata.get("course_id") or "default").strip()
     env_pod_id_override = metadata.get("env_pod_id")
 
-    # Determine pod_id (capability handle)
     pod_id_raw = metadata.get("pod_id") or x_pod_id
     pod = None
 
@@ -244,15 +171,9 @@ async def chat_completions(
             raise HTTPException(status_code=404, detail="Pod not found")
         ctx = dict(pod.data or {})
     else:
-        # Create a new pod with a minimal canonical context
         initial_ctx = metadata.get("initial_context")
-        if isinstance(initial_ctx, dict):
-            ctx = dict(initial_ctx)
-        else:
-            ctx = {"messages": [], "routing_state": {}, "intent_options": {}, "rag": {}, "debug": {}}
-
-        # NEW: ensure required defaults before creating
-        _ensure_required_flow_inputs(ctx)
+        ctx = dict(initial_ctx) if isinstance(initial_ctx, dict) else {}
+        _ensure_base_context(ctx)
 
         pod = await pod_store.create_pod(
             tenant=tenant,
@@ -262,10 +183,9 @@ async def chat_completions(
             data=_strip_debug(ctx),
         )
 
-    # NEW: ensure required defaults for existing pods too
-    _ensure_required_flow_inputs(ctx)
+    _ensure_base_context(ctx)
 
-    # Append incoming messages as delta (client can be memoryless)
+    # Append incoming messages
     msgs = ctx.get("messages")
     if not isinstance(msgs, list):
         msgs = []
@@ -274,7 +194,7 @@ async def chat_completions(
     for m in req.messages:
         msgs.append({"role": m.role, "content": m.content})
 
-    # NEW: apply environment (follow latest) each request
+    # Apply environment (follow latest) each request
     await _apply_course_environment(
         pod_store=pod_store,
         tenant=tenant,
@@ -308,7 +228,7 @@ async def chat_completions(
 
     answer = result.get("answer")
     if answer is None:
-        answer = result.get("output")  # fallback
+        answer = result.get("output")
     if answer is None:
         answer = ""
 
@@ -342,11 +262,9 @@ async def responses(
     tenant = (x_tenant or metadata.get("tenant") or DEFAULT_TENANT).strip()
     end_user_id = req.user or metadata.get("end_user_id") or None
 
-    # NEW: course_id selects environment (follow latest); default is “default”
     course_id = str(metadata.get("course_id") or "default").strip()
     env_pod_id_override = metadata.get("env_pod_id")
 
-    # In Responses, let "conversation" be our pod_id (opaque handle)
     pod_id_raw = req.conversation or metadata.get("pod_id") or x_pod_id
     pod = None
 
@@ -362,13 +280,8 @@ async def responses(
         ctx = dict(pod.data or {})
     else:
         initial_ctx = metadata.get("initial_context")
-        if isinstance(initial_ctx, dict):
-            ctx = dict(initial_ctx)
-        else:
-            ctx = {"messages": [], "routing_state": {}, "intent_options": {}, "rag": {}, "debug": {}}
-
-        # NEW: ensure required defaults before creating
-        _ensure_required_flow_inputs(ctx)
+        ctx = dict(initial_ctx) if isinstance(initial_ctx, dict) else {}
+        _ensure_base_context(ctx)
 
         pod = await pod_store.create_pod(
             tenant=tenant,
@@ -378,10 +291,8 @@ async def responses(
             data=_strip_debug(ctx),
         )
 
-    # NEW: ensure required defaults for existing pods too
-    _ensure_required_flow_inputs(ctx)
+    _ensure_base_context(ctx)
 
-    # Normalize input into a "user" message turn
     msgs = ctx.get("messages")
     if not isinstance(msgs, list):
         msgs = []
@@ -389,7 +300,6 @@ async def responses(
 
     msgs.append({"role": "user", "content": req.input})
 
-    # NEW: apply environment (follow latest) each request
     await _apply_course_environment(
         pod_store=pod_store,
         tenant=tenant,

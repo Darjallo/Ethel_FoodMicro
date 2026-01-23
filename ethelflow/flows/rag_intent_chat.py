@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, TypedDict
 
 import aiohttp
@@ -16,7 +17,51 @@ from ethelflow.agents.intent.node_adapter import intent_node
 COMPLETE_TEMPLATE_URL = "http://complete-template.default.svc:8000/complete_template"
 REASONING_URL = "http://reasoning.default.svc:8000/reasoning"
 
-DEFAULT_TEMPLATE_PATH = "/app/ethelflow/templates/rag_chat.mustache"
+
+# Flow-owned vanilla template (single source of truth; no files needed)
+VANILLA_TEMPLATE = """You are a helpful assistant.
+
+{{#history}}
+Conversation so far:
+{{history}}
+{{/history}}
+
+User question:
+{{prompt}}
+
+{{#chunks}}
+Relevant excerpts:
+{{#chunks}}
+[{{n}}]
+{{text}}
+
+{{/chunks}}
+{{/chunks}}
+
+Answer clearly and cite the excerpt numbers when useful.
+"""
+
+
+# Flow-owned default intent options (clients/env can override by providing ctx.intent_options)
+DEFAULT_INTENT_OPTIONS: Dict[str, Any] = {
+    "version": 1,
+    "default_intent": "chat",
+    "options": {
+        "simulation": {
+            "description": "User wants the system to generate or run a simulation (interactive or computed).",
+            "examples": ["simulate", "model this", "run a simulation", "numerically solve"],
+        },
+        "exercise": {
+            "description": "User wants an interactive exercise/problem (practice, hints, answer checking).",
+            "examples": ["give me an exercise", "quiz me", "practice problems", "check my answer"],
+        },
+        "visualization": {
+            "description": "User wants a visualization (plot/diagram/image).",
+            "examples": ["plot", "visualize", "draw", "show me a graph", "make an image"],
+        },
+    },
+    "confidence_threshold": 0.70,
+}
 
 
 class DebugRAGIntentState(TypedDict, total=False):
@@ -79,6 +124,8 @@ def _require_nonempty_str(v: Any, name: str) -> str:
 
 
 def _read_template_from_disk(path: str) -> str:
+    # optional escape hatch: if someone *does* provide a template_path later,
+    # we support it but fall back to VANILLA_TEMPLATE if missing.
     if not os.path.isabs(path):
         path = os.path.join("/app", path)
     with open(path, "r", encoding="utf-8") as f:
@@ -145,10 +192,10 @@ def normalize_context(state: DebugRAGIntentState) -> DebugRAGIntentState:
     state["messages"] = messages
     state["user_text"] = user_text
 
-    # intent options
+    # intent options (default lives in flow; client/env may override)
     intent_options = ctx.get("intent_options")
     if not isinstance(intent_options, dict) or not intent_options:
-        raise ValueError("context.intent_options must be a non-empty JSON object")
+        intent_options = deepcopy(DEFAULT_INTENT_OPTIONS)
     state["intent_options"] = intent_options
 
     # threshold (allow override)
@@ -249,9 +296,17 @@ def prepare_template_fields(state: DebugRAGIntentState) -> DebugRAGIntentState:
 
 async def render_template(state: DebugRAGIntentState) -> DebugRAGIntentState:
     template_text = state.get("template")
+
     if template_text is None:
-        template_path = state.get("template_path") or DEFAULT_TEMPLATE_PATH
-        template_text = _read_template_from_disk(template_path)
+        # Optional override: template_path (if provided). Otherwise use vanilla.
+        template_path = state.get("template_path")
+        if isinstance(template_path, str) and template_path.strip():
+            try:
+                template_text = _read_template_from_disk(template_path.strip())
+            except FileNotFoundError:
+                template_text = VANILLA_TEMPLATE
+        else:
+            template_text = VANILLA_TEMPLATE
 
     fields = state.get("template_fields")
     if not isinstance(fields, dict):
@@ -500,7 +555,6 @@ async def run(
     ctx_out["debug"] = dbg
 
     if stream:
-        # keep streaming simple for now: return text only
         yield answer
         return
 
