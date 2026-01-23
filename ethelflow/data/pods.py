@@ -12,6 +12,23 @@ from sqlmodel import select
 from ethelflow.data.models import Pod
 
 
+# Stable namespace UUID for UUIDv5 pod ids.
+# IMPORTANT: do not change after committing, or you will lose deterministic lookups.
+POD_ID_NAMESPACE = uuid.UUID("2f35a5a4-9c2c-4a50-9b86-3f5f6a7c9a01")
+
+
+def deterministic_pod_id(*, tenant: str, owner_api: str, pod_type: str, key: str) -> uuid.UUID:
+    """
+    Compute a deterministic pod UUID (UUIDv5) so callers can "find" pods without listing.
+
+    key examples:
+      - environment:  "course:PHYS101"
+      - conversation: "course:PHYS101|user:abc123|conv:default"
+    """
+    name = f"{tenant}|{owner_api}|{pod_type}|{key}"
+    return uuid.uuid5(POD_ID_NAMESPACE, name)
+
+
 class PodNotFound(Exception):
     """Raised when a pod does not exist for the given (id, tenant, owner_api)."""
 
@@ -29,6 +46,7 @@ class PodStore(Protocol):
         pod_type: str,
         end_user_id: Optional[str],
         data: Dict[str, Any],
+        pod_id: Optional[uuid.UUID] = None,
     ) -> Pod: ...
 
     async def get_pod(
@@ -52,13 +70,6 @@ class PodStore(Protocol):
 
 @dataclass
 class PostgresPodStore:
-    """
-    JSONB-backed pod store using the existing AsyncSession pattern.
-
-    Pods are capability-style objects:
-    - You can only fetch/update by exact pod_id.
-    - Calls are scoped by (tenant, owner_api) to prevent cross-API interference.
-    """
     session: AsyncSession
 
     async def create_pod(
@@ -69,8 +80,10 @@ class PostgresPodStore:
         pod_type: str,
         end_user_id: Optional[str],
         data: Dict[str, Any],
+        pod_id: Optional[uuid.UUID] = None,
     ) -> Pod:
         pod = Pod(
+            id=pod_id or uuid.uuid4(),
             tenant=tenant,
             owner_api=owner_api,
             pod_type=pod_type,

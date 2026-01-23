@@ -11,6 +11,12 @@ from ethelflow.routes.assets import router as assets_router
 from ethelflow.routes.flows import router as flows_router
 from ethelflow.settings.postgres_settings import postgres_settings
 
+# API-related stuff - environment admin:
+
+from ethelflow.apis.admin.router import router as admin_router
+
+# Add more APIs below:
+
 from ethelflow.apis.chatapi.router import router as chatapi_router
 
 from pathlib import Path
@@ -81,6 +87,10 @@ def readme():
 
 app.include_router(assets_router)
 app.include_router(flows_router)
+
+# API environment admin:
+
+app.include_router(admin_router)
 
 # Any APIs go here:
 

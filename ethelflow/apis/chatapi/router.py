@@ -6,12 +6,11 @@ import uuid
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
-
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from ethelflow.handler import handler
 from ethelflow.apis.common.deps import get_checkpointer, get_pod_store
 from ethelflow.data.pods import PodConflict, PodNotFound, PodStore
+from ethelflow.handler import handler
 
 from .schemas import ChatCompletionsRequest, ResponsesRequest
 
@@ -19,8 +18,58 @@ router = APIRouter(prefix="/v1", tags=["ChatAPI"])
 
 OWNER_API = "chatapi"
 POD_TYPE = "conversation_context"
+
+# NEW: environment pods (follow-latest)
+ENV_POD_TYPE = "environment"
+
 DEFAULT_TENANT = "ethz"
 DEFAULT_FLOW = "rag_intent_chat"
+
+
+# NEW: vanilla template (your current mustache becomes the built-in fallback)
+VANILLA_TEMPLATE = """You are a helpful assistant.
+
+{{#history}}
+Conversation so far:
+{{history}}
+{{/history}}
+
+User question:
+{{prompt}}
+
+{{#chunks}}
+Relevant excerpts:
+{{#chunks}}
+[{{n}}]
+{{text}}
+
+{{/chunks}}
+{{/chunks}}
+
+Answer clearly and cite the excerpt numbers when useful.
+"""
+
+
+# NEW: default intent options (mirrors your CLI defaults)
+DEFAULT_INTENT_OPTIONS: Dict[str, Any] = {
+    "version": 1,
+    "default_intent": "chat",
+    "options": {
+        "simulation": {
+            "description": "User wants the system to generate or run a simulation (interactive or computed).",
+            "examples": ["simulate", "model this", "run a simulation", "numerically solve"],
+        },
+        "exercise": {
+            "description": "User wants an interactive exercise/problem (practice, hints, answer checking).",
+            "examples": ["give me an exercise", "quiz me", "practice problems", "check my answer"],
+        },
+        "visualization": {
+            "description": "User wants a visualization (plot/diagram/image).",
+            "examples": ["plot", "visualize", "draw", "show me a graph", "make an image"],
+        },
+    },
+    "confidence_threshold": 0.70,
+}
 
 
 def _strip_debug(ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -41,6 +90,100 @@ def _ensure_thread_id(ctx: Dict[str, Any]) -> uuid.UUID:
     return tid
 
 
+# NEW: make sure the flow has what it expects (fixes your current 500s)
+def _ensure_required_flow_inputs(ctx: Dict[str, Any]) -> None:
+    # messages
+    msgs = ctx.get("messages")
+    if not isinstance(msgs, list):
+        ctx["messages"] = []
+
+    # routing_state
+    rs = ctx.get("routing_state")
+    if not isinstance(rs, dict):
+        ctx["routing_state"] = {}
+
+    # intent_options must be a non-empty JSON object for rag_intent_chat
+    io = ctx.get("intent_options")
+    if not isinstance(io, dict) or not io:
+        ctx["intent_options"] = dict(DEFAULT_INTENT_OPTIONS)
+
+    # rag dict + vanilla template fallback
+    rag = ctx.get("rag")
+    if not isinstance(rag, dict):
+        rag = {}
+        ctx["rag"] = rag
+
+    tmpl = rag.get("template")
+    if not isinstance(tmpl, str) or not tmpl.strip():
+        rag["template"] = VANILLA_TEMPLATE
+
+
+# NEW: deterministic env pod id (public, not a secret)
+def _env_pod_id_for_course(*, tenant: str, course_id: str) -> uuid.UUID:
+    # Use a standard namespace; no hardcoded “mystery UUID” required.
+    name = f"ethelflow:{OWNER_API}:env:course:{tenant}:{course_id}"
+    return uuid.uuid5(uuid.NAMESPACE_URL, name)
+
+
+# NEW: merge environment pod config into the flow context (Option A: follow latest)
+async def _apply_course_environment(
+    *,
+    pod_store: PodStore,
+    tenant: str,
+    course_id: str,
+    ctx: Dict[str, Any],
+    env_pod_id_override: Optional[str] = None,
+) -> None:
+    # Determine env pod id (override allowed for testing/admin tooling)
+    if env_pod_id_override:
+        try:
+            env_pod_id = uuid.UUID(str(env_pod_id_override))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid env_pod_id")
+    else:
+        env_pod_id = _env_pod_id_for_course(tenant=tenant, course_id=course_id)
+
+    try:
+        env_pod = await pod_store.get_pod(pod_id=env_pod_id, tenant=tenant, owner_api=OWNER_API)
+    except PodNotFound:
+        # No environment configured: just keep vanilla defaults
+        return
+
+    data = env_pod.data if isinstance(env_pod.data, dict) else {}
+    cfg = data.get("config")
+    if not isinstance(cfg, dict):
+        # allow “flat” env pods too
+        cfg = data
+
+    # Currently supported (minimal, generalizable):
+    # - cfg.template_text (string) -> ctx.rag.template
+    # - cfg.document_ids (list[str]) -> ctx.rag.document_ids
+    # - cfg.rag (dict) -> merged into ctx.rag
+    # - cfg.intent_options (dict) -> overrides ctx.intent_options
+    if isinstance(cfg.get("intent_options"), dict) and cfg["intent_options"]:
+        ctx["intent_options"] = dict(cfg["intent_options"])
+
+    rag = ctx.get("rag")
+    if not isinstance(rag, dict):
+        rag = {}
+        ctx["rag"] = rag
+
+    template_text = cfg.get("template_text")
+    if isinstance(template_text, str) and template_text.strip():
+        rag["template"] = template_text
+
+    doc_ids = cfg.get("document_ids")
+    if isinstance(doc_ids, list):
+        rag["document_ids"] = [str(x) for x in doc_ids if x]
+
+    rag_cfg = cfg.get("rag")
+    if isinstance(rag_cfg, dict):
+        # keep this permissive; only update keys that are present
+        for k, v in rag_cfg.items():
+            if v is not None:
+                rag[k] = v
+
+
 async def _run_flow_once(
     *,
     flow_name: str,
@@ -59,7 +202,7 @@ async def _run_flow_once(
     result = await handler(
         mod=mod,
         context=ctx,
-        stream=False,              # start non-streaming; add streaming later
+        stream=False,  # start non-streaming; add streaming later
         checkpointer=checkpointer,
         thread_id=thread_id,
         command=None,
@@ -78,11 +221,16 @@ async def chat_completions(
     pod_store: PodStore = Depends(get_pod_store),
     checkpointer: AsyncPostgresSaver = Depends(get_checkpointer),
 ):
-    tenant = (x_tenant or req.metadata.get("tenant") or DEFAULT_TENANT).strip()
-    end_user_id = req.user or req.metadata.get("end_user_id") or None
+    metadata = req.metadata or {}
+    tenant = (x_tenant or metadata.get("tenant") or DEFAULT_TENANT).strip()
+    end_user_id = req.user or metadata.get("end_user_id") or None
+
+    # NEW: course_id selects environment (follow latest); default is “default”
+    course_id = str(metadata.get("course_id") or "default").strip()
+    env_pod_id_override = metadata.get("env_pod_id")
 
     # Determine pod_id (capability handle)
-    pod_id_raw = req.metadata.get("pod_id") or x_pod_id
+    pod_id_raw = metadata.get("pod_id") or x_pod_id
     pod = None
 
     if pod_id_raw:
@@ -97,11 +245,14 @@ async def chat_completions(
         ctx = dict(pod.data or {})
     else:
         # Create a new pod with a minimal canonical context
-        initial_ctx = req.metadata.get("initial_context")
+        initial_ctx = metadata.get("initial_context")
         if isinstance(initial_ctx, dict):
             ctx = dict(initial_ctx)
         else:
             ctx = {"messages": [], "routing_state": {}, "intent_options": {}, "rag": {}, "debug": {}}
+
+        # NEW: ensure required defaults before creating
+        _ensure_required_flow_inputs(ctx)
 
         pod = await pod_store.create_pod(
             tenant=tenant,
@@ -111,6 +262,9 @@ async def chat_completions(
             data=_strip_debug(ctx),
         )
 
+    # NEW: ensure required defaults for existing pods too
+    _ensure_required_flow_inputs(ctx)
+
     # Append incoming messages as delta (client can be memoryless)
     msgs = ctx.get("messages")
     if not isinstance(msgs, list):
@@ -118,10 +272,18 @@ async def chat_completions(
         ctx["messages"] = msgs
 
     for m in req.messages:
-        # keep permissive; flow expects {"role","content"}-like
         msgs.append({"role": m.role, "content": m.content})
 
-    flow_name = str(req.metadata.get("flow") or DEFAULT_FLOW)
+    # NEW: apply environment (follow latest) each request
+    await _apply_course_environment(
+        pod_store=pod_store,
+        tenant=tenant,
+        course_id=course_id,
+        ctx=ctx,
+        env_pod_id_override=env_pod_id_override if isinstance(env_pod_id_override, str) else None,
+    )
+
+    flow_name = str(metadata.get("flow") or DEFAULT_FLOW)
 
     try:
         result = await _run_flow_once(flow_name=flow_name, tenant=tenant, ctx=ctx, checkpointer=checkpointer)
@@ -142,7 +304,6 @@ async def chat_completions(
     except PodConflict:
         raise HTTPException(status_code=409, detail="Pod update conflict")
 
-    # Return pod id so a memoryless client can just replay it
     resp.headers["X-Pod-Id"] = str(pod.id)
 
     answer = result.get("answer")
@@ -151,7 +312,6 @@ async def chat_completions(
     if answer is None:
         answer = ""
 
-    # Minimal OpenAI-like shape (+ one extra pod_id field that clients can ignore)
     return {
         "id": f"chatcmpl_{uuid.uuid4().hex}",
         "object": "chat.completion",
@@ -165,7 +325,6 @@ async def chat_completions(
                 "finish_reason": "stop",
             }
         ],
-        # optionally expose debug to test clients without persisting it
         "debug": (ctx_out.get("debug") if isinstance(ctx_out, dict) else None),
     }
 
@@ -179,11 +338,16 @@ async def responses(
     pod_store: PodStore = Depends(get_pod_store),
     checkpointer: AsyncPostgresSaver = Depends(get_checkpointer),
 ):
-    tenant = (x_tenant or req.metadata.get("tenant") or DEFAULT_TENANT).strip()
-    end_user_id = req.user or req.metadata.get("end_user_id") or None
+    metadata = req.metadata or {}
+    tenant = (x_tenant or metadata.get("tenant") or DEFAULT_TENANT).strip()
+    end_user_id = req.user or metadata.get("end_user_id") or None
+
+    # NEW: course_id selects environment (follow latest); default is “default”
+    course_id = str(metadata.get("course_id") or "default").strip()
+    env_pod_id_override = metadata.get("env_pod_id")
 
     # In Responses, let "conversation" be our pod_id (opaque handle)
-    pod_id_raw = req.conversation or req.metadata.get("pod_id") or x_pod_id
+    pod_id_raw = req.conversation or metadata.get("pod_id") or x_pod_id
     pod = None
 
     if pod_id_raw:
@@ -197,11 +361,14 @@ async def responses(
             raise HTTPException(status_code=404, detail="Conversation not found")
         ctx = dict(pod.data or {})
     else:
-        initial_ctx = req.metadata.get("initial_context")
+        initial_ctx = metadata.get("initial_context")
         if isinstance(initial_ctx, dict):
             ctx = dict(initial_ctx)
         else:
             ctx = {"messages": [], "routing_state": {}, "intent_options": {}, "rag": {}, "debug": {}}
+
+        # NEW: ensure required defaults before creating
+        _ensure_required_flow_inputs(ctx)
 
         pod = await pod_store.create_pod(
             tenant=tenant,
@@ -211,6 +378,9 @@ async def responses(
             data=_strip_debug(ctx),
         )
 
+    # NEW: ensure required defaults for existing pods too
+    _ensure_required_flow_inputs(ctx)
+
     # Normalize input into a "user" message turn
     msgs = ctx.get("messages")
     if not isinstance(msgs, list):
@@ -219,7 +389,16 @@ async def responses(
 
     msgs.append({"role": "user", "content": req.input})
 
-    flow_name = str(req.metadata.get("flow") or DEFAULT_FLOW)
+    # NEW: apply environment (follow latest) each request
+    await _apply_course_environment(
+        pod_store=pod_store,
+        tenant=tenant,
+        course_id=course_id,
+        ctx=ctx,
+        env_pod_id_override=env_pod_id_override if isinstance(env_pod_id_override, str) else None,
+    )
+
+    flow_name = str(metadata.get("flow") or DEFAULT_FLOW)
 
     try:
         result = await _run_flow_once(flow_name=flow_name, tenant=tenant, ctx=ctx, checkpointer=checkpointer)
@@ -248,7 +427,6 @@ async def responses(
     if answer is None:
         answer = ""
 
-    # Minimal Responses-like shape (+ debug visible but not persisted)
     return {
         "id": f"resp_{uuid.uuid4().hex}",
         "object": "response",
