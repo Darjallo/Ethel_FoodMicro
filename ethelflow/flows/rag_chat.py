@@ -10,8 +10,10 @@ from ethelflow.agents.search_vectors.node_adapter import search_vectors_node
 from ethelflow.agents.retrieve_chunks.node_adapter import retrieve_chunks_node
 
 # K8s service DNS names (match your other agents)
-COMPLETE_TEMPLATE_URL = "http://complete-template.default.svc:8000/complete_template"
-REASONING_URL = "http://reasoning.default.svc:8000/reasoning"
+# COMPLETE_TEMPLATE_URL = "http://complete-template.default.svc:8000/complete_template"
+# REASONING_URL = "http://reasoning.default.svc:8000/reasoning"
+COMPLETE_TEMPLATE_URL = "http://complete-template:8000/complete_template"
+REASONING_URL = "http://reasoning:8000/reasoning"
 
 # Default template path INSIDE the container image.
 # Put a file here in-repo so it gets copied into the image at build time.

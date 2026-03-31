@@ -308,6 +308,26 @@ async def responses(
         env_pod_id_override=env_pod_id_override if isinstance(env_pod_id_override, str) else None,
     )
 
+    ###### My MODIFICATION
+    # Map request-supplied RAG document scope into flow context.
+    # Accept both top-level req.document_ids and metadata["document_ids"].
+    doc_ids = None
+
+    # top-level field (preferred)
+    if getattr(req, "document_ids", None):
+        if isinstance(req.document_ids, list):
+            doc_ids = [str(x) for x in req.document_ids if x]
+
+    # fallback: metadata.document_ids
+    if not doc_ids:
+        meta_doc_ids = metadata.get("document_ids")
+        if isinstance(meta_doc_ids, list):
+            doc_ids = [str(x) for x in meta_doc_ids if x]
+
+    if doc_ids:
+        ctx["document_ids"] = doc_ids
+    ######
+
     flow_name = str(metadata.get("flow") or DEFAULT_FLOW)
 
     try:

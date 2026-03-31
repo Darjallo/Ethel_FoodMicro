@@ -14,8 +14,12 @@ from ethelflow.agents.retrieve_chunks.node_adapter import retrieve_chunks_node
 from ethelflow.agents.intent.node_adapter import intent_node
 
 # services
-COMPLETE_TEMPLATE_URL = "http://complete-template.default.svc:8000/complete_template"
-REASONING_URL = "http://reasoning.default.svc:8000/reasoning"
+# COMPLETE_TEMPLATE_URL = "http://complete-template.default.svc:8000/complete_template"
+# REASONING_URL = "http://reasoning.default.svc:8000/reasoning"
+
+COMPLETE_TEMPLATE_URL = os.getenv("COMPLETE_TEMPLATE_URL", "http://complete-template:8000/complete_template")
+REASONING_URL = os.getenv("REASONING_URL", "http://reasoning:8000/reasoning")
+
 
 
 # Flow-owned vanilla template (single source of truth; no files needed)

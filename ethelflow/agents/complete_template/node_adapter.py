@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from typing import Any, AsyncGenerator, Callable, Dict
 import aiohttp
+import os
+
 
 from ethelflow.agents.complete_template.models import (
     CompleteTemplateRequest,
     CompleteTemplateResponse,
 )
 
-COMPLETE_TEMPLATE_URL: str = "http://complete-template.default.svc:8000/complete_template"
-
+# COMPLETE_TEMPLATE_URL: str = "http://complete-template.default.svc:8000/complete_template"
+COMPLETE_TEMPLATE_URL: str = "http://complete-template:8000/complete_template"
 
 def complete_template_node(
     template_key: str = "template",

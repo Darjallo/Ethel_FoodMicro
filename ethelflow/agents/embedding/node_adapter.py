@@ -3,9 +3,12 @@ from __future__ import annotations
 from typing import Any, AsyncGenerator, Callable, Dict, Optional
 import aiohttp
 
+import os
+
 from ethelflow.agents.embedding.models import EmbeddingRequest, EmbeddingResponse
 
-EMBEDDING_URL: str = "http://embedding.default.svc:8000/embedding"
+# EMBEDDING_URL: str = "http://embedding.default.svc:8000/embedding"
+EMBEDDING_URL: str = "http://embedding:8000/embedding"
 
 
 def embedding_node(

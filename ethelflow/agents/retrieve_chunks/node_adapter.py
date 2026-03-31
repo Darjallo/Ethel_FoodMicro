@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import Any, AsyncGenerator, Callable, Dict, List
 import aiohttp
 import uuid
+import os
 
 from ethelflow.agents.retrieve_chunks.models import RetrieveChunksRequest, RetrieveChunksResponse
 
-RETRIEVE_CHUNKS_URL: str = "http://retrieve-chunks.default.svc:8000/retrieve_chunks"
+# RETRIEVE_CHUNKS_URL: str = "http://retrieve-chunks.default.svc:8000/retrieve_chunks"
+RETRIEVE_CHUNKS_URL: str = "http://retrieve-chunks:8000/retrieve_chunks"
 
 
 def _as_uuid_list(xs: Any, field_name: str) -> List[uuid.UUID]:

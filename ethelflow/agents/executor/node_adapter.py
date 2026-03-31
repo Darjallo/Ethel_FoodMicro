@@ -1,10 +1,12 @@
 from typing import Callable, Dict, Any, AsyncGenerator
 import aiohttp
 import base64
+import os
 
 from ethelflow.agents.executor.models import ExecutionRequest, ExecutionResult
 
-EXECUTOR_URL: str = "http://executor.default.svc:8000/execute"
+# EXECUTOR_URL: str = "http://executor.default.svc:8000/execute"
+EXECUTOR_URL: str = "http://executor:8000/execute"
 
 
 def executor_node(

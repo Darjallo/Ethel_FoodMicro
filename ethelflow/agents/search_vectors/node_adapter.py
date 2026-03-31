@@ -3,10 +3,13 @@ from __future__ import annotations
 from typing import Any, AsyncGenerator, Callable, Dict, Optional, List
 import aiohttp
 import uuid
+import os
 
 from ethelflow.agents.search_vectors.models import SearchVectorsRequest, SearchVectorsResponse
 
-SEARCH_VECTORS_URL: str = "http://search-vectors.default.svc:8000/search_vectors"
+# SEARCH_VECTORS_URL: str = "http://search-vectors.default.svc:8000/search_vectors"
+SEARCH_VECTORS_URL: str = "http://search-vectors:8000/search_vectors"
+
 
 
 def _as_uuid_list(xs: Any, field_name: str) -> List[uuid.UUID]:

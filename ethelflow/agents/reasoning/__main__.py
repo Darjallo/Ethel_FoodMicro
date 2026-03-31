@@ -8,20 +8,20 @@ from typing import Dict
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from openai import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 
 from ethelflow.agents.reasoning.models import ReasoningRequest, ReasoningResponse
 from ethelflow.assets.s3 import s3_manager
 from ethelflow.model_catalog import ModelCatalog
 
-DEFAULT_API_VERSION = os.getenv("ETHELFLOW_AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+# DEFAULT_API_VERSION = os.getenv("ETHELFLOW_AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
 INFERENCE_CLASS = os.getenv("ETHELFLOW_INFERENCE_CLASS", "reasoning")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.catalog = ModelCatalog.load()
-    app.state.clients: Dict[str, AsyncAzureOpenAI] = {}
+    app.state.clients: Dict[str, AsyncOpenAI] = {}
     await s3_manager.init()
     yield
     await s3_manager.close()
@@ -42,8 +42,14 @@ def _get_catalog(request: Request) -> ModelCatalog:
     return cat
 
 
-async def _get_azure_client(request: Request, provider_name: str, endpoint: str, api_key_env: str) -> AsyncAzureOpenAI:
-    clients: Dict[str, AsyncAzureOpenAI] = request.app.state.clients
+
+async def _get_openai_client(
+    request: Request,
+    provider_name: str,
+    endpoint: str,
+    api_key_env: str,
+) -> AsyncOpenAI:
+    clients: Dict[str, AsyncOpenAI] = request.app.state.clients
     if provider_name in clients:
         return clients[provider_name]
 
@@ -54,10 +60,10 @@ async def _get_azure_client(request: Request, provider_name: str, endpoint: str,
             detail=f"Missing provider API key env var {api_key_env} for provider {provider_name}",
         )
 
-    client = AsyncAzureOpenAI(
-        azure_endpoint=endpoint,
-        api_version=DEFAULT_API_VERSION,
+    # For public OpenAI, endpoint should typically be: https://api.openai.com/v1
+    client = AsyncOpenAI(
         api_key=api_key,
+        base_url=endpoint,
     )
     clients[provider_name] = client
     return client
@@ -126,7 +132,7 @@ async def reasoning_with_document(req: ReasoningRequest, request: Request):
 
     route = catalog.tenant_inference_route(tenant=req.tenant, class_name=INFERENCE_CLASS)
     provider = route.provider
-    client = await _get_azure_client(request, provider.name, provider.endpoint, provider.api_key_env)
+    client = await _get_openai_client(request, provider.name, provider.endpoint, provider.api_key_env)
 
     deployment = req.deployment or route.deployment
 
@@ -160,7 +166,7 @@ async def reasoning(req: ReasoningRequest, request: Request):
 
     route = catalog.tenant_inference_route(tenant=req.tenant, class_name=INFERENCE_CLASS)
     provider = route.provider
-    client = await _get_azure_client(request, provider.name, provider.endpoint, provider.api_key_env)
+    client = await _get_openai_client(request, provider.name, provider.endpoint, provider.api_key_env)
 
     deployment = req.deployment or route.deployment
 

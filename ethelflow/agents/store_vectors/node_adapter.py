@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import Any, AsyncGenerator, Callable, Dict, Optional, List
 import aiohttp
 import uuid
+import os
 
 from ethelflow.agents.store_vectors.models import StoreVectorsRequest, StoreVectorsResponse
 
-STORE_VECTORS_URL: str = "http://store-vectors.default.svc:8000/store_vectors"
-
+# STORE_VECTORS_URL: str = "http://store-vectors.default.svc:8000/store_vectors"
+STORE_VECTORS_URL: str = "http://store-vectors:8000/store_vectors"
 
 def _as_uuid(val: Any, field_name: str) -> uuid.UUID:
     if isinstance(val, uuid.UUID):

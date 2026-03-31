@@ -1,6 +1,7 @@
 from typing import Any, AsyncGenerator, Callable, Dict, List
 import aiohttp
 import uuid
+import os
 
 from ethelflow.agents.file_to_images.models import (
     CleanupTempRequest,
@@ -9,9 +10,10 @@ from ethelflow.agents.file_to_images.models import (
     FileToImagesResponse,
 )
 
-FILE_TO_IMAGES_URL: str = "http://file-to-images.default.svc:8000/file_to_images"
-CLEANUP_TEMP_URL: str = "http://file-to-images.default.svc:8000/cleanup_temp"
-
+# FILE_TO_IMAGES_URL: str = "http://file-to-images.default.svc:8000/file_to_images"
+# CLEANUP_TEMP_URL: str = "http://file-to-images.default.svc:8000/cleanup_temp"
+FILE_TO_IMAGES_URL: str = "http://file-to-images:8000/file_to_images"
+CLEANUP_TEMP_URL: str = "http://file-to-images:8000/cleanup_temp"
 
 def _as_uuid(val: Any, field_name: str) -> uuid.UUID:
     if isinstance(val, uuid.UUID):

@@ -1,11 +1,12 @@
 from typing import Any, AsyncGenerator, Callable, Dict, List
 import aiohttp
 import uuid
+import os
 
 from ethelflow.agents.store_images.models import StoreImagesRequest, StoreImagesResponse, StoreImageItem
 
-STORE_IMAGES_URL: str = "http://store-images.default.svc:8000/store_images"
-
+# STORE_IMAGES_URL: str = "http://store-images.default.svc:8000/store_images"
+STORE_IMAGES_URL: str = "http://store-images:8000/store_images"
 
 def _as_uuid(val: Any, field_name: str) -> uuid.UUID:
     if isinstance(val, uuid.UUID):

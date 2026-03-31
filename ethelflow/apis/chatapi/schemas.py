@@ -25,4 +25,6 @@ class ResponsesRequest(BaseModel):
     stream: bool = False
     user: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    document_ids: Optional[List[str]] = None
+
 

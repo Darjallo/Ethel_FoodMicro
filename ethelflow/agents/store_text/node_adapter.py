@@ -1,11 +1,12 @@
 from typing import Any, AsyncGenerator, Callable, Dict
 import aiohttp
 import uuid
+import os
 
 from ethelflow.agents.store_text.models import StoreTextRequest, StoreTextResponse
 
-STORE_TEXT_URL: str = "http://store-text.default.svc:8000/store_text"
-
+# STORE_TEXT_URL: str = "http://store-text.default.svc:8000/store_text"
+STORE_TEXT_URL: str = "http://store-text:8000/store_text"
 
 def _as_uuid(val: Any, field_name: str) -> uuid.UUID:
     if isinstance(val, uuid.UUID):

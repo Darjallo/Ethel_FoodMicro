@@ -9,7 +9,8 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Tuple
 
 from fastapi import FastAPI, HTTPException, Request
-from openai import AsyncAzureOpenAI
+# from openai import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 from openai import BadRequestError  # type: ignore
 
 from ethelflow.agents.intent.models import IntentRequest, IntentResponse
@@ -17,7 +18,7 @@ from ethelflow.model_catalog import ModelCatalog
 
 logger = logging.getLogger("uvicorn.error")
 
-DEFAULT_API_VERSION = os.getenv("ETHELFLOW_AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+# DEFAULT_API_VERSION = os.getenv("ETHELFLOW_AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
 INFERENCE_CLASS = os.getenv("ETHELFLOW_INFERENCE_CLASS", "low_latency")
 
 # Intent models may burn hidden tokens; give them enough room to emit visible JSON.
@@ -32,7 +33,9 @@ if DEFAULT_REASONING_EFFORT not in ("low", "medium", "high"):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.catalog = ModelCatalog.load()
-    app.state.clients: Dict[str, AsyncAzureOpenAI] = {}
+    # app.state.clients: Dict[str, AsyncAzureOpenAI] = {}
+    app.state.clients: Dict[str, AsyncOpenAI] = {}
+
     yield
     for c in app.state.clients.values():
         try:
@@ -51,8 +54,14 @@ def _get_catalog(request: Request) -> ModelCatalog:
     return cat
 
 
-async def _get_azure_client(request: Request, provider_name: str, endpoint: str, api_key_env: str) -> AsyncAzureOpenAI:
-    clients: Dict[str, AsyncAzureOpenAI] = request.app.state.clients
+
+async def _get_openai_client(
+    request: Request,
+    provider_name: str,
+    endpoint: str,
+    api_key_env: str,
+) -> AsyncOpenAI:
+    clients: Dict[str, AsyncOpenAI] = request.app.state.clients
     if provider_name in clients:
         return clients[provider_name]
 
@@ -63,13 +72,14 @@ async def _get_azure_client(request: Request, provider_name: str, endpoint: str,
             detail=f"Missing provider API key env var {api_key_env} for provider {provider_name}",
         )
 
-    client = AsyncAzureOpenAI(
-        azure_endpoint=endpoint,
-        api_version=DEFAULT_API_VERSION,
+    # For public OpenAI, endpoint should typically be: https://api.openai.com/v1
+    client = AsyncOpenAI(
         api_key=api_key,
+        base_url=endpoint,
     )
     clients[provider_name] = client
     return client
+
 
 
 def _build_system_prompt(intent_options: dict) -> str:
@@ -256,7 +266,7 @@ async def healthz():
 
 
 async def _call_once(
-    client: AsyncAzureOpenAI,
+    client: AsyncOpenAI,
     deployment: str,
     messages: List[dict],
     *,
@@ -270,7 +280,7 @@ async def _call_once(
     base_params: Dict[str, Any] = {
         "model": deployment,
         "messages": messages,
-        "max_completion_tokens": max_completion_tokens,
+        "max_tokens": max_completion_tokens,
         "stream": False,
     }
 
@@ -291,7 +301,7 @@ async def intent(req: IntentRequest, request: Request):
 
     route = catalog.tenant_inference_route(tenant=req.tenant, class_name=INFERENCE_CLASS)
     provider = route.provider
-    client = await _get_azure_client(request, provider.name, provider.endpoint, provider.api_key_env)
+    client = await _get_openai_client(request, provider.name, provider.endpoint, provider.api_key_env)
 
     deployment = req.deployment or route.deployment
 

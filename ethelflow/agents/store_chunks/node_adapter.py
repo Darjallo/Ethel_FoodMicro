@@ -2,11 +2,12 @@ from typing import Any, AsyncGenerator, Callable, Dict
 import uuid
 
 import aiohttp
+import os
 
 from ethelflow.agents.store_chunks.models import StoreChunksRequest, StoreChunksResponse
 
-STORE_CHUNKS_URL: str = "http://store-chunks.default.svc:8000/store_chunks"
-
+# STORE_CHUNKS_URL: str = "http://store-chunks.default.svc:8000/store_chunks"
+STORE_CHUNKS_URL: str = "http://store-chunks:8000/store_chunks"
 
 def _as_uuid(val: Any, field_name: str) -> uuid.UUID:
     if isinstance(val, uuid.UUID):

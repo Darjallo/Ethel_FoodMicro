@@ -3,11 +3,16 @@ from __future__ import annotations
 from typing import Any, AsyncGenerator, Callable, Dict
 import aiohttp
 import uuid
+import os
+
 
 from ethelflow.agents.reasoning.models import ReasoningRequest, ReasoningResponse
 
-REASONING_URL: str = "http://reasoning.default.svc:8000/reasoning"
-REASONING_WITH_DOCUMENT_URL: str = "http://reasoning.default.svc:8000/reasoning_with_document"
+# REASONING_URL: str = "http://reasoning.default.svc:8000/reasoning"
+# REASONING_WITH_DOCUMENT_URL: str = "http://reasoning.default.svc:8000/reasoning_with_document"
+
+REASONING_URL: str = "http://reasoning:8000/reasoning"
+REASONING_WITH_DOCUMENT_URL: str = "http://reasoning:8000/reasoning_with_document"
 
 
 def reasoning_node(

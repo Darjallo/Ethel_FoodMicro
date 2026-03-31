@@ -2,9 +2,10 @@ from typing import Callable, Dict, Any, AsyncGenerator
 from ethelflow.agents.file_to_text.models import FileToTextRequest, FileToTextResponse
 import aiohttp
 import uuid
+import os
 
-FILE_TO_TEXT_URL = "http://file-to-text.default.svc:8000/file_to_text"
-
+# FILE_TO_TEXT_URL = "http://file-to-text.default.svc:8000/file_to_text"
+FILE_TO_TEXT_URL = "http://file-to-text:8000/file_to_text"
 
 def file_to_text_node(
     document_id_key: str = "document_id",

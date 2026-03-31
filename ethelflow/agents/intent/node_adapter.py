@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from typing import Any, AsyncGenerator, Callable, Dict
 import aiohttp
+import os
 
 from ethelflow.agents.intent.models import IntentRequest, IntentResponse
 
-INTENT_URL: str = "http://intent.default.svc:8000/intent"
+# INTENT_URL: str = "http://intent.default.svc:8000/intent"
+INTENT_URL: str = os.getenv("INTENT_URL", "http://intent:8000/intent")
+
 
 
 def intent_node(

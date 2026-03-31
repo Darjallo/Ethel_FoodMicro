@@ -19,9 +19,11 @@
 from typing import Callable, Dict, Any, AsyncGenerator
 from ethelflow.agents.chunk_text.models import ChunkingRequest, ChunkingResponse
 import aiohttp
+import os
 
 # could also be an environment variable
-CHUNK_TEXT_URL: str = "http://chunk-text.default.svc:8000/chunk_text"
+# CHUNK_TEXT_URL: str = "http://chunk-text.default.svc:8000/chunk_text"
+CHUNK_TEXT_URL: str = "http://chunk-text:8000/chunk_text"
 
 
 def chunk_text_node(
