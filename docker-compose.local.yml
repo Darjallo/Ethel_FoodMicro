@@ -23,6 +23,9 @@ services:
       - miniodata:/data
 
   ethelflow:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow"]
     env_file: .env
@@ -52,9 +55,6 @@ services:
       STORE_TEXT_URL: http://store-text:8000/store_text
       STORE_CHUNKS_URL: http://store-chunks:8000/store_chunks
       STORE_VECTORS_URL: http://store-vectors:8000/store_vectors
-      # optional:
-      # FILE_TO_IMAGES_URL: http://file-to-images:8000/file_to_images
-
     volumes:
       - ./:/app
       - ./local_config:/etc/ethelflow:ro
@@ -71,6 +71,9 @@ services:
       - intent
 
   reasoning:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.reasoning"]
     env_file: .env
@@ -88,6 +91,9 @@ services:
       - minio
 
   embedding:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.embedding"]
     env_file: .env
@@ -99,6 +105,9 @@ services:
       - ./local_config:/etc/ethelflow:ro
 
   search-vectors:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.search_vectors"]
     environment:
@@ -114,6 +123,9 @@ services:
       - postgres
 
   retrieve-chunks:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.retrieve_chunks"]
     environment:
@@ -126,10 +138,16 @@ services:
       - postgres
 
   complete-template:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.complete_template"]
 
   intent:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.intent"]
     env_file: .env
@@ -142,6 +160,9 @@ services:
       - ./local_config:/etc/ethelflow:ro
 
   file-to-text:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.file_to_text"]
     env_file: .env
@@ -163,6 +184,9 @@ services:
       - minio
 
   chunk-text:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.chunk_text"]
     env_file: .env
@@ -171,6 +195,9 @@ services:
       - ./local_config:/etc/ethelflow:ro
 
   store-text:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.store_text"]
     env_file: .env
@@ -187,6 +214,9 @@ services:
       - postgres
 
   store-chunks:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.store_chunks"]
     env_file: .env
@@ -203,6 +233,9 @@ services:
       - postgres
 
   store-vectors:
+    build:
+      context: .
+      dockerfile: ethelflow.Dockerfile
     image: ethelflow:latest
     command: ["python", "-m", "ethelflow.agents.store_vectors"]
     env_file: .env
