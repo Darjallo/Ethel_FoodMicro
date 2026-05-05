@@ -12,10 +12,8 @@ from langgraph.graph import StateGraph, END
 
 from ethelflow.agents.reasoning.node_adapter import reasoning_node
 from ethelflow.tutor.state import TutorState 
-from ethelflow.tutor.helpers import _advance_to_next_topic, _pick_quick_check
+from ethelflow.tutor.helpers import _advance_to_next_topic, _pick_quick_check, analyze_and_update_state
 from ethelflow.tutor.course_registry import get_provider
-    
- 
     
 async def run(
     thread_id: uuid.UUID,
@@ -36,9 +34,7 @@ async def run(
     context = context or {}
     if not isinstance(context, dict):
         raise ValueError("context must be a dict")
-    
-    #if command is not None:
-     #   raise ValueError("This tutor flow does not support resume/command yet")
+    print("DEBUG raw context =", context, flush=True)
         
     def build_initial_state(context: dict) -> TutorState:
         tenant = context.get("tenant")
@@ -51,9 +47,39 @@ async def run(
     
         user_message = context.get("user_message")
         if user_message is None:
-            user_message = context.get("input", "")
+            user_message = context.get("input")
+            
+        if user_message is None:  # reading from the structure of context: "messages": [{"role": "user", "content": "ok"}]
+            messages = context.get("messages", [])
+            if isinstance(messages, list):
+                for msg in reversed(messages):
+                    if not isinstance(msg, dict):
+                        continue
+                    role = str(msg.get("role", "")).strip().lower()
+                    if role != "user":
+                        continue
+        
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        user_message = content
+                        break
+        
+                    if isinstance(content, list):
+                        parts = []
+                        for part in content:
+                            if isinstance(part, dict):
+                                text = part.get("text")
+                                if isinstance(text, str):
+                                    parts.append(text)
+                        user_message = "\n".join(parts).strip()
+                        break
+            
         if not isinstance(user_message, str):
-            raise ValueError("'user_message' or 'input' must be a string")
+            raise ValueError("'user_message', 'input', or user message in 'messages' must be a string")
+        
+        user_message = user_message.strip()
+        if not user_message:
+            raise ValueError(f"Could not extract user message from context: keys={list(context.keys())}")
     
         subject = context.get("subject", "Plant Biology")
         student_level = context.get("student_level", "high school")
@@ -95,26 +121,30 @@ async def run(
             tutor_raw_output="",
             quiz_prompt="",
             quiz_raw_output="",
-            grading_prompt="",
-            grading_raw_output="",
-            grading_result={},
+            
+            grading_prompt=context.get("grading_prompt", ""),
+            grading_raw_output=context.get("grading_raw_output", ""),
+            grading_result=context.get("grading_result", {}),
+            grading_question_id=context.get("grading_question_id"),
+
             quit=False,
-            last_analysis={},
+            last_analysis=context.get("last_analysis", {}),
             history=history,
             last_user_msg=user_message,
             mastery=mastery,
-            pending_quiz=None,
-            last_quiz_score=None,
-            awaiting_check=False,
-            last_check_question="",
-            last_check_question_id=None,
-            asked_question_ids=[],
-            coins=0,
-            coins_awarded_last=0,
-            draft_response="",
-            response_type="",
-            check_attempts=0,
-            ready_to_advance=False,
+            pending_quiz=context.get("pending_quiz"),
+            last_quiz_score=context.get("last_quiz_score"),
+            
+            awaiting_check=context.get("awaiting_check", False),
+            last_check_question=context.get("last_check_question", ""),
+            last_check_question_id=context.get("last_check_question_id"),
+            asked_question_ids=context.get("asked_question_ids", []),
+            coins=context.get("coins", 0),
+            coins_awarded_last=context.get("coins_awarded_last", 0),
+            draft_response=context.get("draft_response", ""),
+            response_type=context.get("response_type", ""),
+            check_attempts=context.get("check_attempts", 0),
+            ready_to_advance=context.get("ready_to_advance", False),
         )
         
     # functions for nodes
@@ -131,31 +161,44 @@ async def run(
         prompt = f"""
         You are an intent router for a proactive tutor.
         Classify the user's message into exactly one label:
+        - "answer_question": the user is attempting to answer the currently pending quick-check question
         - "question": asking for explanation, help, confusion, why/how
         - "new_lesson": asks to learn something new or continue lesson
-        - "meta": asks about progress, coins, plan, what next, schedule, review
+        - "meta": plan, what next, schedule, review
         - "quiz_request": asks for quiz/test/practice questions or demonstrates readiness for a test
+        - "progress_request": asks about progress, coins, rating
+        
+        Important:
+        If there is a pending question and the user message is an attempted answer to it, return "answer_question".
+        If the user asks about coins/progress/plan/help instead of answering, do NOT return "answer_question".
         
         Return ONLY the label.
         Message: {user}
-        """
+        Pending question: {state.get("last_check_question", "")}
+        """.strip()
         
         state["router_prompt"] = prompt
-        print("DEBUG router response_type before prompt =", state.get("response_type"), flush=True)
+        #print("DEBUG router response_type before prompt =", state.get("response_type"), flush=True)
+        print("DEBUG router prompt: ", prompt, flush=True)
         return state
     
     
     def router_label_node(state: TutorState) -> TutorState:
         print("DEBUG entered router_label_node", flush=True)
+        #raw = (state.get("router_raw_output") or "").strip().lower()
+        #label = raw.splitlines()[0].strip() if raw else ""
+
         label = (state.get("router_raw_output") or "").strip().lower()
-        if label not in {"question","new_lesson","meta","quiz_request"}:
+        print("DEBUG label: ", label, flush=True)
+        
+        if label not in {"answer_question", "question","new_lesson","meta","quiz_request", "progress_request"}:
             label = "question"
         state["response_type"] = label
         print("DEBUG parsed label =", label, flush=True)
         return state
     
     def planner_node(state: TutorState) -> TutorState:
-        print("DEBUG entered planner_node", flush=True)
+        print("\nDEBUG entered planner_node", flush=True)
         label = state.get("response_type", "")
         topic_id = state["current_topic_id"]
         mastery = state["mastery"].get(topic_id, 0.0)
@@ -174,8 +217,12 @@ async def run(
                 return state
 
         # 2) Decide what node to run next (simple heuristic)
-        if label == "quiz_request":
+        if label == "answer_question":
+            state["response_type"] = "grade_answer"
+        elif label == "quiz_request":
             state["response_type"] = "quiz"
+        elif label == "progress_request":
+            state["response_type"] = "progress"
         elif label == "meta":
             state["response_type"] = "progress"
         elif label == "question":
@@ -188,7 +235,7 @@ async def run(
         else:
             # default: give lesson for current topic
             state["response_type"] = "lesson"
-
+        print("DEBUG response_type =", state["response_type"], flush=True)
         return state
     
     
@@ -286,6 +333,10 @@ async def run(
         state["response_type"] = "progress"
         return state
     
+    def grade_answer_node(state: TutorState) -> TutorState:
+        print("DEBUG entered grade_answer_node", flush=True)
+        return state
+
     def formatter_node(state: TutorState) -> TutorState:
         # Add a small header depending on type
         t = state["response_type"]
@@ -302,7 +353,78 @@ async def run(
 
     
     initial_state = build_initial_state(context)
+    print("DEBUG initial_state last_user_msg =", initial_state.get("last_user_msg"), flush=True)
+    user_text = initial_state["last_user_msg"]  
+    #initial_state = analyze_and_update_state(user_text, initial_state)  
+    config = {"configurable": {"thread_id": str(thread_id)}}
     
+    history = list(initial_state.get("history", []))
+    history.append({"role": "user", "content": user_text})
+    initial_state["history"] = history
+
+    # # additional flow
+    # # sends grading_prompt to the reasoning service
+    # # stores the result in grading_raw_output
+    # # re-runs analyze_and_update_state(...), which now parses the grading result and updates the tutor state
+    # if initial_state.get("grading_prompt"):
+    #     grading_workflow = StateGraph(TutorState)
+
+    #     grading_workflow.add_node(
+    #         "grading_reasoning",
+    #         reasoning_node(
+    #             tenant_key="tenant",
+    #             prompt_key="grading_prompt",
+    #             reasoning_effort_key=None,
+    #             stream_key=None,
+    #             output_key="grading_raw_output",
+    #         ),
+    #     )
+    
+    #     grading_workflow.set_entry_point("grading_reasoning")
+    #     grading_workflow.add_edge("grading_reasoning", END)
+    
+    #     grading_app = grading_workflow.compile(checkpointer=checkpointer)
+    #     initial_state = await grading_app.ainvoke(initial_state, config=config)
+    
+    #     print("DEBUG grading_raw_output =", initial_state.get("grading_raw_output"), flush=True)
+    
+    #     initial_state = analyze_and_update_state(user_text, initial_state)
+    
+    # if initial_state.get("quit"):
+    #     yield {
+    #         "answer": initial_state.get("draft_response", ""),
+    #         "response_type": initial_state.get("response_type", ""),
+    #         "context": initial_state,
+    #     }
+    #     return
+    
+    # if initial_state.get("response_type") in {"retry_check", "reveal_and_advance"}:
+    #     history = list(initial_state.get("history", []))
+    #     history.append({"role": "user", "content": user_text})
+    #     history.append({"role": "assistant", "content": initial_state["draft_response"]})
+    #     initial_state["history"] = history
+        
+
+    
+    #     yield {
+    #         "answer": initial_state.get("draft_response", ""),
+    #         "response_type": initial_state.get("response_type", ""),
+    #         "current_topic_id": initial_state.get("current_topic_id"),
+    #         "awaiting_check": initial_state.get("awaiting_check", False),
+    #         "last_check_question": initial_state.get("last_check_question", ""),
+    #         "last_check_question_id": initial_state.get("last_check_question_id"),
+    #         "mastery": initial_state.get("mastery", {}),
+    #         "coins": initial_state.get("coins", 0),
+    #         "context": initial_state,
+    #     }
+    #     return
+    
+    # print("DEBUG after grading analyze response_type =", initial_state.get("response_type"), flush=True)
+    # print("DEBUG mastery after grading =", initial_state.get("mastery"), flush=True)
+    # print("DEBUG coins after grading =", initial_state.get("coins"), flush=True)
+    
+    # # Only if no direct grading/retry/reveal response was produced, continue into the graph
+
     workflow = StateGraph(TutorState)
 
     workflow.add_node("router_prompt", router_prompt_node)
@@ -322,6 +444,7 @@ async def run(
     #workflow.add_node("tutor", tutor_node)
     #workflow.add_node("quiz", quiz_node)
     workflow.add_node("progress", progress_node)
+    workflow.add_node("grade_answer", grade_answer_node)
     workflow.add_node("formatter", formatter_node)
     
     workflow.set_entry_point("router_prompt")
@@ -345,9 +468,9 @@ async def run(
     workflow.add_edge("router_reasoning", "router_label")
     workflow.add_edge("router_label", "planner")
     
-    def route_from_planner(state: TutorState) -> Literal["lesson","progress"]: #"tutor","quiz",
+    def route_from_planner(state: TutorState) -> Literal["lesson","progress", "grade_answer"]: #"tutor","quiz",
         rt = state["response_type"]
-        if rt in {"lesson","progress"}: # "tutor","quiz",
+        if rt in {"lesson","progress", "grade_answer"}: # "tutor","quiz",
             return rt
         return "lesson" #"tutor"
 
@@ -356,19 +479,94 @@ async def run(
         # "tutor": "tutor",
         # "quiz": "quiz",
         "progress": "progress",
+        "grade_answer": "grade_answer",
     })
 
     for n in ["lesson","progress"]:  # "tutor","quiz",
         workflow.add_edge(n, "formatter")
 
     workflow.add_edge("formatter", END)
+    workflow.add_edge("grade_answer", END)
 
     app = workflow.compile(checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": str(thread_id)}}
     
     print("HELLO I AM HERE", flush=True)
     
     out = await app.ainvoke(initial_state, config=config)
+    print("DEBUG post-router response_type =", out.get("response_type"), flush=True)
+    
+    # insertion #######
+    if out.get("response_type") == "grade_answer":
+        out = analyze_and_update_state(user_text, out)
+    
+        if out.get("grading_prompt"):
+            grading_workflow = StateGraph(TutorState)
+            grading_workflow.add_node(
+                "grading_reasoning",
+                reasoning_node(
+                    tenant_key="tenant",
+                    prompt_key="grading_prompt",
+                    reasoning_effort_key=None,
+                    stream_key=None,
+                    output_key="grading_raw_output",
+                ),
+            )
+            grading_workflow.set_entry_point("grading_reasoning")
+            grading_workflow.add_edge("grading_reasoning", END)
+    
+            grading_app = grading_workflow.compile(checkpointer=checkpointer)
+            out = await grading_app.ainvoke(out, config=config)
+    
+            print("DEBUG grading_raw_output =", out.get("grading_raw_output"), flush=True)
+            out = analyze_and_update_state(user_text, out)
+    
+        if out.get("response_type") in {"retry_check", "reveal_and_advance"}:
+            history = list(out.get("history", []))
+            history.append({"role": "assistant", "content": out.get("draft_response", "")})
+            out["history"] = history
+    
+            yield {
+                "answer": out.get("draft_response", ""),
+                "response_type": out.get("response_type", ""),
+                "current_topic_id": out.get("current_topic_id"),
+                "awaiting_check": out.get("awaiting_check", False),
+                "last_check_question": out.get("last_check_question", ""),
+                "last_check_question_id": out.get("last_check_question_id"),
+                "mastery": out.get("mastery", {}),
+                "coins": out.get("coins", 0),
+                "context": {
+                    "tenant": out.get("tenant"),
+                    "course_id": out.get("course_id"),
+                    "subject": out.get("subject"),
+                    "student_level": out.get("student_level"),
+                    "goals": out.get("goals"),
+                    "current_topic_id": out.get("current_topic_id"),
+                    "topic_order": out.get("topic_order", []),
+                    "mastery": out.get("mastery", {}),
+                    "coins": out.get("coins", 0),
+                    "awaiting_check": out.get("awaiting_check", False),
+                    "last_check_question": out.get("last_check_question", ""),
+                    "last_check_question_id": out.get("last_check_question_id"),
+                    "asked_question_ids": out.get("asked_question_ids", []),
+                    "history": out.get("history", []),
+                    "check_attempts": out.get("check_attempts", 0),
+                    "ready_to_advance": out.get("ready_to_advance", False),
+                    "grading_prompt": out.get("grading_prompt", ""),
+                    "grading_raw_output": out.get("grading_raw_output", ""),
+                    "grading_result": out.get("grading_result", {}),
+                    "grading_question_id": out.get("grading_question_id"),
+                    "last_analysis": out.get("last_analysis", {}),
+                },
+            }
+            return
+
+        if out.get("response_type") == "new_lesson":
+            out = await app.ainvoke(out, config=config)
+    
+    history = list(out.get("history", []))
+    history.append({"role": "assistant", "content": out.get("draft_response", "")})
+    out["history"] = history
+
     print("DEBUG tutor out =", out, flush=True)
     yield {
             "answer": out.get("draft_response", ""),

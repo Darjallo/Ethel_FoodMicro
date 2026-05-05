@@ -9,14 +9,10 @@ from typing import Dict, Any, Optional, List
 import random
 import json
 import pandas as pd
-from langchain_core.messages import SystemMessage
 
 from ethelflow.tutor.state import TutorState 
 from ethelflow.tutor.course_registry import PROVIDERS, COURSE, PASS_SCORE, MAX_WRONG_ATTEMPTS
 from ethelflow.tutor.course_registry import get_provider
-# from llm_init import llm
-
-
 
 def _advance_to_next_topic(state: TutorState) -> None:
     """Advance current_topic_id to the next id in topic_order if possible."""
@@ -106,219 +102,263 @@ def format_correct_answer(answer_key: dict) -> str:
         return "Correct answer (key points):\n- " + "\n- ".join(req)
     return "Correct answer: (not available)"
 
+# ____________
 
+def prepare_grading_request(user_text: str, state: TutorState) -> TutorState:
+    """
+    Prepare grading prompt for a quick-check answer without calling the LLM.
+    If the turn is not a grading turn, return state unchanged.
+    """
 
-# def analyze_and_update_state(user_text: str, state: "TutorState") -> "TutorState":
+    text = user_text.strip()
     
-#     print("DEBUG awaiting_check:", state.get("awaiting_check"))
-#     print("DEBUG pending_quiz:", state.get("pending_quiz"))
-#     print("DEBUG last_check_question_id:", state.get("last_check_question_id"))
-#     print("DEBUG current_topic_id:", state.get("current_topic_id"))
-#     print("DEBUG mastery before:", state["mastery"].get(state["current_topic_id"], 0.0))
+    if text.lower() in {"q", "quit", "exit"}:
+        state["quit"] = True
+        state["last_analysis"] = {"intent": "quit"}
+        return state
+    
+    if state.get("response_type") != "grade_answer":
+        return state
+    
+    provider = get_provider(state)
+    topic_id = state["current_topic_id"]
+    current_mastery = state["mastery"].get(topic_id, 0.0)
+    
+    # if not (state.get("awaiting_check") and not state.get("pending_quiz")):
+    #     return state
+    
+    qid = state.get("last_check_question_id")
+    if not qid:
+        state["awaiting_check"] = False
+        state["last_check_question"] = ""
+        state["last_check_question_id"] = None
+        state["last_analysis"] = {
+            "intent": "quick_check_answer",
+            "score": 0.0,
+            "feedback": "Internal error: missing question id.",
+            "mastery_before": current_mastery,
+            "mastery_after": current_mastery,
+        }
+        state["response_type"] = "new_lesson"
+        return state
+    
+    q = provider.get_question_by_id(qid)
+    if not q:
+        state["awaiting_check"] = False
+        state["last_check_question"] = ""
+        state["last_check_question_id"] = None
+        state["last_analysis"] = {
+            "intent": "quick_check_answer",
+            "score": 0.0,
+            "feedback": "Internal error: question not found.",
+            "mastery_before": current_mastery,
+            "mastery_after": current_mastery,
+        }
+        state["response_type"] = "new_lesson"
+        return state
+    
+    topic_meta = next((t for t in provider.list_topics() if t["topic_id"] == topic_id), None)
+    topic_title = topic_meta["title"] if topic_meta else topic_id
 
-#     text = user_text.strip()
+    rubric = q.get("rubric") or {}
+    answer_key = q.get("answer_key") or {}
 
-#     if text.lower() in {"q", "quit", "exit"}:
-#         state["quit"] = True
-#         state["last_analysis"] = {"intent": "quit"}
-#         return state
+    prompt = f"""
+    You are grading a student's short answer to a course quick-check question.
+    
+    TOPIC: {topic_title}
+    
+    QUESTION: {q["question_text"]}
+    STUDENT ANSWER: {text}
+    
+    ANSWER KEY (concept points):
+    {json.dumps(answer_key, ensure_ascii=False, indent=2)}
+    
+    RUBRIC (how to score):
+    {json.dumps(rubric, ensure_ascii=False, indent=2)}
+    
+    Instructions:
+    - Judge semantic correctness, not exact phrasing.
+    - Evaluate each rubric criterion as: "met", "partial", or "not_met".
+    - Provide evidence by quoting a short fragment from the student's answer (or empty if none).
+    - Identify the main mistake (if any) and explain it briefly.
+    
+    Return JSON only in exactly this schema:
+    {{
+      "criterion_results": [
+        {{"id": "<criterion_id>", "result": "met|partial|not_met", "evidence": "<short quote or empty>"}}
+      ],
+      "score": <float 0..1>,
+      "brief_feedback": "<one short sentence>",
+      "error_explanation": "<1-3 sentences, empty if fully correct>"
+    }}
+    """.strip()
+    state["grading_prompt"] = prompt
+    state["grading_raw_output"] = ""
+    state["grading_result"] = {}
+    state["grading_question_id"] = qid
+    state["last_analysis"] = {
+        "intent": "quick_check_answer_pending",
+        "question_id": qid,
+        "mastery_before": current_mastery,
+    }
+    return state
 
-#     provider = get_provider(state)
-#     topic_id = state["current_topic_id"]
-#     current_mastery = state["mastery"].get(topic_id, 0.0)
 
-#     # --- Quick check grading path ---
-#     if state.get("awaiting_check") and not state.get("pending_quiz"):
-#         qid = state.get("last_check_question_id")
-#         if not qid:
-#             state["awaiting_check"] = False
-#             state["last_check_question"] = ""
-#             state["last_check_question_id"] = None
-#             state["last_analysis"] = {
-#                 "intent": "quick_check_answer",
-#                 "score": 0.0,
-#                 "feedback": "Internal error: missing question id.",
-#                 "mastery_before": current_mastery,
-#                 "mastery_after": current_mastery,
-#             }
-#             state["response_type"] = "new_lesson"
-#             return state
+def apply_grading_result(user_text: str, state: TutorState) -> TutorState:
+    """
+    Apply grading result already written to state['grading_raw_output'].
+    No model call here.
+    """
+    if not state.get("grading_prompt") and not state.get("grading_raw_output"):
+        return state
+    
+    provider = get_provider(state)
+    topic_id = state["current_topic_id"]
+    current_mastery = state["mastery"].get(topic_id, 0.0)
+    qid = state.get("grading_question_id") or state.get("last_check_question_id")
 
-#         q = provider.get_question_by_id(qid)
-#         if not q:
-#             state["awaiting_check"] = False
-#             state["last_check_question"] = ""
-#             state["last_check_question_id"] = None
-#             state["last_analysis"] = {
-#                 "intent": "quick_check_answer",
-#                 "score": 0.0,
-#                 "feedback": "Internal error: question not found.",
-#                 "mastery_before": current_mastery,
-#                 "mastery_after": current_mastery,
-#             }
-#             state["response_type"] = "new_lesson"
-#             return state
+    q = provider.get_question_by_id(qid) if qid else None
+    if not q:
+        state["grading_prompt"] = ""
+        state["grading_raw_output"] = ""
+        state["grading_result"] = {}
+        state["grading_question_id"] = None
+        return state
 
-#         # Safe topic title lookup
-#         topic_meta = next((t for t in provider.list_topics() if t["topic_id"] == topic_id), None)
-#         topic_title = topic_meta["title"] if topic_meta else topic_id
+    raw = (state.get("grading_raw_output") or "").strip()
 
-#         rubric = q.get("rubric") or {}
-#         answer_key = q.get("answer_key") or {}
+    try:
+        data = json.loads(raw)
+        score = float(data.get("score", 0.0))
+    except Exception:
+        data = {
+            "criterion_results": [],
+            "score": 0.0,
+            "brief_feedback": "Couldn't grade reliably; try rephrasing your answer.",
+            "error_explanation": "",
+        }
+        score = 0.0
 
-#         prompt = f"""
-# You are grading a student's short answer to a course quick-check question.
+    state["grading_result"] = data
+    score = max(0.0, min(1.0, score))
+    print("score = ", score)
 
-# TOPIC: {topic_title}
+    state["check_attempts"] = state.get("check_attempts", 0) + 1
+    passed = score >= PASS_SCORE
 
-# QUESTION: {q["question_text"]}
-# STUDENT ANSWER: {text}
+    if passed:
+        new_mastery = max(0.0, min(1.0, current_mastery + score))
+        state["mastery"][topic_id] = new_mastery
 
-# ANSWER KEY (concept points):
-# {json.dumps(answer_key, ensure_ascii=False, indent=2)}
+        awarded = 0
+        if new_mastery >= 0.8:
+            awarded = 5
+        elif new_mastery >= 0.6:
+            awarded = 2
 
-# RUBRIC (how to score):
-# {json.dumps(rubric, ensure_ascii=False, indent=2)}
+        state["coins"] = state.get("coins", 0) + awarded
+        state["coins_awarded_last"] = awarded
 
-# Instructions:
-# - Judge semantic correctness, not exact phrasing.
-# - Evaluate each rubric criterion as: "met", "partial", or "not_met".
-# - Provide evidence by quoting a short fragment from the student's answer (or empty if none).
-# - Identify the main mistake (if any) and explain it briefly.
+        state["awaiting_check"] = False
+        state["last_check_question"] = ""
+        state["last_check_question_id"] = None
+        state["check_attempts"] = 0
+        state["ready_to_advance"] = True
 
-# Return JSON only in exactly this schema:
-# {{
-#   "criterion_results": [
-#     {{"id": "<criterion_id>", "result": "met|partial|not_met", "evidence": "<short quote or empty>"}}
-#   ],
-#   "score": <float 0..1>,
-#   "brief_feedback": "<one short sentence>",
-#   "error_explanation": "<1-3 sentences, empty if fully correct>"
-# }}
-# """
-#         raw = llm.invoke([SystemMessage(content=prompt)]).content.strip()
+        state["last_analysis"] = {
+            "intent": "quick_check_answer",
+            "score": score,
+            "feedback": data.get("brief_feedback", ""),
+            "error_explanation": data.get("error_explanation", ""),
+            "criterion_results": data.get("criterion_results", []),
+            "question_id": qid,
+            "mastery_before": current_mastery,
+            "mastery_after": new_mastery,
+            "passed": True,
+        }
 
-#         try:
-#             data = json.loads(raw)
-#             score = float(data.get("score", 0.0))
-#         except Exception:
-#             data = {
-#                 "criterion_results": [],
-#                 "score": 0.0,
-#                 "brief_feedback": "Couldn't grade reliably; try rephrasing your answer.",
-#                 "error_explanation": ""
-#             }
-#             score = 0.0
+        state["response_type"] = "new_lesson"
 
-#         score = max(0.0, min(1.0, score))
-#         print('score = ', score)
+    elif state["check_attempts"] >= MAX_WRONG_ATTEMPTS:
+        correct_text = format_correct_answer(q.get("answer_key") or {})
+        new_mastery = current_mastery
+        state["mastery"][topic_id] = new_mastery
 
-#         # update attempts
-#         state["check_attempts"] = state.get("check_attempts", 0) + 1
+        state["awaiting_check"] = False
+        state["last_check_question"] = ""
+        state["last_check_question_id"] = None
+        state["check_attempts"] = 0
+        state["ready_to_advance"] = True
 
-#         passed = score >= PASS_SCORE  # passed is boolean
-#         forced_reveal = False
+        state["last_analysis"] = {
+            "intent": "quick_check_answer",
+            "score": score,
+            "feedback": data.get("brief_feedback", ""),
+            "error_explanation": data.get("error_explanation", ""),
+            "criterion_results": data.get("criterion_results", []),
+            "question_id": qid,
+            "mastery_before": current_mastery,
+            "mastery_after": new_mastery,
+            "passed": False,
+            "forced_reveal": True,
+        }
 
-#         if passed:
-#             # mastery update on success
-#             new_mastery = max(0.0, min(1.0, current_mastery + score))   # a clever function defining knowledge accumulation can be introduced here
-#             state["mastery"][topic_id] = new_mastery
-            
-#             awarded = 0
-#             if new_mastery >= 0.8:
-#                 awarded = 5
-#             elif new_mastery >= 0.6:
-#                 awarded = 2
+        state["draft_response"] = (
+            f"Not quite.\n\n"
+            f"{data.get('brief_feedback','')}\n\n"
+            f"{data.get('error_explanation','')}\n\n"
+            f"✅ {correct_text}\n\n"
+            f"Let’s move on to the next topic."
+        )
+        state["response_type"] = "reveal_and_advance"
 
-#             state["coins"] = state.get("coins", 0) + awarded
-#             state["coins_awarded_last"] = awarded
-            
-#             state["awaiting_check"] = False
-#             state["last_check_question"] = ""
-#             state["last_check_question_id"] = None
-#             state["check_attempts"] = 0
+    else:
+        state["ready_to_advance"] = False
+        state["last_analysis"] = {
+            "intent": "quick_check_answer",
+            "score": score,
+            "feedback": data.get("brief_feedback", ""),
+            "error_explanation": data.get("error_explanation", ""),
+            "criterion_results": data.get("criterion_results", []),
+            "question_id": qid,
+            "mastery_before": current_mastery,
+            "mastery_after": current_mastery,
+            "passed": False,
+            "attempt": state["check_attempts"],
+        }
 
-#             state["ready_to_advance"] = True
+        state["draft_response"] = (
+            f"{data.get('brief_feedback','Not quite.')}\n\n"
+            f"{data.get('error_explanation','')}\n\n"
+            f"Try again: **{q['question_text']}**"
+        )
+        state["response_type"] = "retry_check"
 
-#             state["last_analysis"] = {
-#                 "intent": "quick_check_answer",
-#                 "score": score,
-#                 "feedback": data.get("brief_feedback", ""),
-#                 "error_explanation": data.get("error_explanation", ""),
-#                 "criterion_results": data.get("criterion_results", []),
-#                 "question_id": qid,
-#                 "mastery_before": current_mastery,
-#                 "mastery_after": new_mastery,
-#                 "passed": True,
-#             }
+    state["grading_prompt"] = ""
+    state["grading_raw_output"] = ""
+    state["grading_question_id"] = None
+    return state
+    
+def analyze_and_update_state(user_text: str, state: TutorState) -> TutorState:
+    
+    print("DEBUG awaiting_check:", state.get("awaiting_check"))
+    print("DEBUG pending_quiz:", state.get("pending_quiz"))
+    print("DEBUG last_check_question_id:", state.get("last_check_question_id"))
+    print("DEBUG current_topic_id:", state.get("current_topic_id"))
+    print("DEBUG mastery before:", state["mastery"].get(state["current_topic_id"], 0.0))
 
-#             # let planner decide next (lesson/quiz/advance)
-#             state["response_type"] = "new_lesson"
-#             return state
+    text = user_text.strip()
 
-#         # wrong answer
-#         if state["check_attempts"] >= MAX_WRONG_ATTEMPTS:
-#             forced_reveal = True
-#             correct_text = format_correct_answer(answer_key)
+    if text.lower() in {"q", "quit", "exit"}:
+        state["quit"] = True
+        state["last_analysis"] = {"intent": "quit"}
+        return state
 
-#             # optional: small mastery bump (or leave unchanged)
-#             new_mastery = current_mastery
-#             state["mastery"][topic_id] = new_mastery
+    if state.get("grading_raw_output"):
+        return apply_grading_result(user_text, state)
 
-#             state["awaiting_check"] = False
-#             state["last_check_question"] = ""
-#             state["last_check_question_id"] = None
-#             state["check_attempts"] = 0
-
-#             state["ready_to_advance"] = True
-
-#             state["last_analysis"] = {
-#                 "intent": "quick_check_answer",
-#                 "score": score,
-#                 "feedback": data.get("brief_feedback", ""),
-#                 "error_explanation": data.get("error_explanation", ""),
-#                 "criterion_results": data.get("criterion_results", []),
-#                 "question_id": qid,
-#                 "mastery_before": current_mastery,
-#                 "mastery_after": new_mastery,
-#                 "passed": False,
-#                 "forced_reveal": True,
-#             }
-
-#             state["draft_response"] = (
-#                 f"Not quite.\n\n"
-#                 f"{data.get('brief_feedback','')}\n\n"
-#                 f"{data.get('error_explanation','')}\n\n"
-#                 f"✅ {correct_text}\n\n"
-#                 f"Let’s move on to the next topic."
-#             )
-#             state["response_type"] = "reveal_and_advance"
-#             return state
-
-#         # wrong but still has attempts left: retry
-#         state["ready_to_advance"] = False
-#         state["last_analysis"] = {
-#             "intent": "quick_check_answer",
-#             "score": score,
-#             "feedback": data.get("brief_feedback", ""),
-#             "error_explanation": data.get("error_explanation", ""),
-#             "criterion_results": data.get("criterion_results", []),
-#             "question_id": qid,
-#             "mastery_before": current_mastery,
-#             "mastery_after": current_mastery,
-#             "passed": False,
-#             "attempt": state["check_attempts"],
-#         }
-
-#         state["draft_response"] = (
-#             f"{data.get('brief_feedback','Not quite.')}\n\n"
-#             f"{data.get('error_explanation','')}\n\n"
-#             f"Try again: **{q['question_text']}**"
-#         )
-#         state["response_type"] = "retry_check"
-#         return state
-
-#     return state
+    return prepare_grading_request(user_text, state)
 
 
 def init_state(
@@ -339,7 +379,6 @@ def init_state(
     return TutorState(
         course_id=course_id,
 
-        #content_provider=provider,
         asked_question_ids=[],
         current_topic_id=first_topic_id,
         topic_order=topic_order, 
@@ -358,6 +397,10 @@ def init_state(
 
         coins=0,
         coins_awarded_last=0,
+        grading_prompt="",
+        grading_raw_output="",
+        grading_result={},
+        grading_question_id=None,
 
         draft_response=(
             "## 👋 Welcome\n"
@@ -371,7 +414,7 @@ def init_state(
 
         awaiting_check=False,
         last_check_question="",
-
+        last_check_question_id=None,
         check_attempts=0,
         ready_to_advance=False,
 
