@@ -333,6 +333,32 @@ async def run(
         state["response_type"] = "progress"
         return state
     
+    def tutor_node(state: TutorState) -> TutorState:
+        print("DEBUG entered tutor_node", flush=True)
+    
+        subject = state["subject"]
+        level = state["student_level"]
+        topic = state["current_topic_id"]
+        user = state["last_user_msg"]
+    
+        prompt = f"""
+        You are a helpful tutor for {subject}. Level: {level}.
+        Stay on topic: {topic} unless the user clearly shifts.
+        If the student explicitly asks to move to the next topic, explain that the student has to successfully answer the quiz questions for the previous topic.
+        Answer the student's question clearly, with:
+        - a simple explanation
+        - a tiny example
+        - one follow-up question to check understanding
+        
+        Question: {user}
+        """.strip()
+    
+        state["tutor_prompt"] = prompt
+        state["response_type"] = "tutor"
+        print("DEBUG tutor prompt =", prompt, flush=True)
+        return state
+
+
     def grade_answer_node(state: TutorState) -> TutorState:
         print("DEBUG entered grade_answer_node", flush=True)
         return state
@@ -362,68 +388,6 @@ async def run(
     history.append({"role": "user", "content": user_text})
     initial_state["history"] = history
 
-    # # additional flow
-    # # sends grading_prompt to the reasoning service
-    # # stores the result in grading_raw_output
-    # # re-runs analyze_and_update_state(...), which now parses the grading result and updates the tutor state
-    # if initial_state.get("grading_prompt"):
-    #     grading_workflow = StateGraph(TutorState)
-
-    #     grading_workflow.add_node(
-    #         "grading_reasoning",
-    #         reasoning_node(
-    #             tenant_key="tenant",
-    #             prompt_key="grading_prompt",
-    #             reasoning_effort_key=None,
-    #             stream_key=None,
-    #             output_key="grading_raw_output",
-    #         ),
-    #     )
-    
-    #     grading_workflow.set_entry_point("grading_reasoning")
-    #     grading_workflow.add_edge("grading_reasoning", END)
-    
-    #     grading_app = grading_workflow.compile(checkpointer=checkpointer)
-    #     initial_state = await grading_app.ainvoke(initial_state, config=config)
-    
-    #     print("DEBUG grading_raw_output =", initial_state.get("grading_raw_output"), flush=True)
-    
-    #     initial_state = analyze_and_update_state(user_text, initial_state)
-    
-    # if initial_state.get("quit"):
-    #     yield {
-    #         "answer": initial_state.get("draft_response", ""),
-    #         "response_type": initial_state.get("response_type", ""),
-    #         "context": initial_state,
-    #     }
-    #     return
-    
-    # if initial_state.get("response_type") in {"retry_check", "reveal_and_advance"}:
-    #     history = list(initial_state.get("history", []))
-    #     history.append({"role": "user", "content": user_text})
-    #     history.append({"role": "assistant", "content": initial_state["draft_response"]})
-    #     initial_state["history"] = history
-        
-
-    
-    #     yield {
-    #         "answer": initial_state.get("draft_response", ""),
-    #         "response_type": initial_state.get("response_type", ""),
-    #         "current_topic_id": initial_state.get("current_topic_id"),
-    #         "awaiting_check": initial_state.get("awaiting_check", False),
-    #         "last_check_question": initial_state.get("last_check_question", ""),
-    #         "last_check_question_id": initial_state.get("last_check_question_id"),
-    #         "mastery": initial_state.get("mastery", {}),
-    #         "coins": initial_state.get("coins", 0),
-    #         "context": initial_state,
-    #     }
-    #     return
-    
-    # print("DEBUG after grading analyze response_type =", initial_state.get("response_type"), flush=True)
-    # print("DEBUG mastery after grading =", initial_state.get("mastery"), flush=True)
-    # print("DEBUG coins after grading =", initial_state.get("coins"), flush=True)
-    
-    # # Only if no direct grading/retry/reveal response was produced, continue into the graph
 
     workflow = StateGraph(TutorState)
 
@@ -441,7 +405,23 @@ async def run(
     workflow.add_node("router_label", router_label_node)
     workflow.add_node("planner", planner_node)
     workflow.add_node("lesson", lesson_node)
-    #workflow.add_node("tutor", tutor_node)
+    workflow.add_node("tutor", tutor_node)
+    workflow.add_node(
+        "tutor_reasoning",
+        reasoning_node(
+            tenant_key="tenant",
+            prompt_key="tutor_prompt",
+            reasoning_effort_key=None,
+            stream_key=None,
+            output_key="tutor_raw_output",
+        ),
+    )
+    def tutor_finalize_node(state: TutorState) -> TutorState:
+        print("DEBUG entered tutor_finalize_node", flush=True)
+        state["draft_response"] = (state.get("tutor_raw_output") or "").strip()
+        state["response_type"] = "tutor"
+        return state
+    workflow.add_node("tutor_finalize", tutor_finalize_node)
     #workflow.add_node("quiz", quiz_node)
     workflow.add_node("progress", progress_node)
     workflow.add_node("grade_answer", grade_answer_node)
@@ -468,21 +448,24 @@ async def run(
     workflow.add_edge("router_reasoning", "router_label")
     workflow.add_edge("router_label", "planner")
     
-    def route_from_planner(state: TutorState) -> Literal["lesson","progress", "grade_answer"]: #"tutor","quiz",
+    def route_from_planner(state: TutorState) -> Literal["lesson","progress", "grade_answer", "tutor"]: #"quiz",
         rt = state["response_type"]
-        if rt in {"lesson","progress", "grade_answer"}: # "tutor","quiz",
+        if rt in {"lesson","progress", "grade_answer", "tutor"}: #,"quiz",
             return rt
-        return "lesson" #"tutor"
+        return "lesson" 
 
     workflow.add_conditional_edges("planner", route_from_planner, {
         "lesson": "lesson",
-        # "tutor": "tutor",
+        "tutor": "tutor",
         # "quiz": "quiz",
         "progress": "progress",
         "grade_answer": "grade_answer",
     })
 
-    for n in ["lesson","progress"]:  # "tutor","quiz",
+    workflow.add_edge("tutor", "tutor_reasoning")
+    workflow.add_edge("tutor_reasoning", "tutor_finalize")
+
+    for n in ["lesson","progress", "tutor_finalize"]:  # "tutor","quiz",
         workflow.add_edge(n, "formatter")
 
     workflow.add_edge("formatter", END)

@@ -93,7 +93,11 @@ topic_1 = {
     "prerequisites": [],
 }
 
-lesson_text_1 = """Of all the types of cells revealed by the microscope, bacteria have the simplest structure..."""
+lesson_text_1 = """Of all the types of cells revealed by the microscope, bacteria have the simplest structure...
+
+This is a plant cell:
+    
+![Plant cell](https://upload.wikimedia.org/wikipedia/commons/d/d8/Plant_cell_structure-en.svg)  """
 
 key_points_1 = [
     "Classification is based on presence/absence of a nucleus.",
@@ -153,6 +157,7 @@ Plant cells are eukaryotic cells with several structures that distinguish them f
 Like other eukaryotes, they contain a nucleus and membrane-bound organelles. In addition, plant
 cells have a rigid cell wall made mainly of cellulose, chloroplasts for photosynthesis, and a
 large central vacuole that helps maintain turgor pressure and stores water and dissolved substances.
+![Chloroplast structure](https://upload.wikimedia.org/wikipedia/commons/9/9c/Chloroplast_mini.svg)
 """
 
 key_points_2 = [
