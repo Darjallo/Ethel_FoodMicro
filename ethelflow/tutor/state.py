@@ -31,9 +31,35 @@ class TutorState(TypedDict, total=False):
     quiz_prompt: str
     quiz_raw_output: str
     
+    # for RAG
+    document_ids: list[str]
+    extractor: str
+    method: str
+    embedding_space: Optional[str]
+    top_k: int
+    
+    prompts: list[str]
+    embeddings: list[list[float]]
+    query_embedding: list[float]
+    
+    search_vectors_response: dict
+    hit_chunk_ids: list[str]
+    
+    retrieve_chunks_response: dict
+    chunk_texts: list[str]
+    
+    history_text: str
+    template_fields: dict
+    final_prompt: str
+    
+    template: Optional[str]
+    template_path: Optional[str]
+    #
+    
     grading_prompt: str
     grading_raw_output: str
     grading_result: Dict[str, Any]
+
     #
 
     quit: bool

@@ -14,6 +14,12 @@ from ethelflow.agents.reasoning.node_adapter import reasoning_node
 from ethelflow.tutor.state import TutorState 
 from ethelflow.tutor.helpers import _advance_to_next_topic, _pick_quick_check, analyze_and_update_state
 from ethelflow.tutor.course_registry import get_provider
+from ethelflow.tutor.tutor_rag import prepare_template_fields, render_template, \
+    prepare_prompt_list, prepare_history_text, prepare_query_embedding
+from ethelflow.agents.embedding.node_adapter import embedding_node
+from ethelflow.agents.search_vectors.node_adapter import search_vectors_node
+from ethelflow.agents.retrieve_chunks.node_adapter import retrieve_chunks_node
+
     
 async def run(
     thread_id: uuid.UUID,
@@ -106,6 +112,9 @@ async def run(
         history = context.get("history")
         if not isinstance(history, list):
             history = []
+            
+        rag = context.get("rag") if isinstance(context.get("rag"), dict) else {}
+
     
         return TutorState(
             tenant=tenant.strip(),
@@ -134,6 +143,14 @@ async def run(
             mastery=mastery,
             pending_quiz=context.get("pending_quiz"),
             last_quiz_score=context.get("last_quiz_score"),
+            
+            document_ids = rag.get("document_ids", context.get("document_ids", [])),
+            extractor = rag.get("extractor", context.get("extractor", "file_to_text")),
+            method = rag.get("method", context.get("method", "recursive_char_1000_100_htmlstrip")),
+            embedding_space = rag.get("embedding_space", context.get("embedding_space")),
+            top_k = int(rag.get("top_k", context.get("top_k", 10))),
+            template=context.get("template"),
+            template_path=context.get("template_path"),
             
             awaiting_check=context.get("awaiting_check", False),
             last_check_question=context.get("last_check_question", ""),
@@ -340,9 +357,13 @@ async def run(
         level = state["student_level"]
         topic = state["current_topic_id"]
         user = state["last_user_msg"]
+        
+        # for RAG retrieval
+        state["prompts"] = [user]
     
         prompt = f"""
         You are a helpful tutor for {subject}. Level: {level}.
+        Mention explicitely that you are NOT using uploaded documents.
         Stay on topic: {topic} unless the user clearly shifts.
         If the student explicitly asks to move to the next topic, explain that the student has to successfully answer the quiz questions for the previous topic.
         Answer the student's question clearly, with:
@@ -354,10 +375,10 @@ async def run(
         """.strip()
     
         state["tutor_prompt"] = prompt
+        # state["final_prompt"] = prompt  fallback option, maybe improve it??
         state["response_type"] = "tutor"
         print("DEBUG tutor prompt =", prompt, flush=True)
         return state
-
 
     def grade_answer_node(state: TutorState) -> TutorState:
         print("DEBUG entered grade_answer_node", flush=True)
@@ -410,12 +431,52 @@ async def run(
         "tutor_reasoning",
         reasoning_node(
             tenant_key="tenant",
-            prompt_key="tutor_prompt",
+            # prompt_key="tutor_prompt",
+            prompt_key="final_prompt",
             reasoning_effort_key=None,
             stream_key=None,
             output_key="tutor_raw_output",
         ),
     )
+    workflow.add_node("prepare_prompt_list", prepare_prompt_list)
+    workflow.add_node(
+        "embedding",
+        embedding_node(
+            input_texts_key="prompts",
+            tenant_key="tenant",
+            space_key="embedding_space",
+            output_key="embeddings",
+        ),
+    )
+    workflow.add_node("prepare_query_embedding", prepare_query_embedding)
+    workflow.add_node(
+        "search_vectors",
+        search_vectors_node(
+            document_ids_key="document_ids",
+            extractor_key="extractor",
+            method_key="method",
+            tenant_key="tenant",
+            space_key="embedding_space",
+            query_vector_key="query_embedding",
+            top_k_key="top_k",
+            output_key="search_vectors_response",
+            output_chunk_ids_key="hit_chunk_ids",
+        ),
+    )
+    workflow.add_node(
+        "retrieve_chunks",
+        retrieve_chunks_node(
+            chunk_ids_key="hit_chunk_ids",
+            tenant_key="tenant",
+            output_key="retrieve_chunks_response",
+            output_texts_key="chunk_texts",
+        ),
+    )
+    
+    workflow.add_node("prepare_history_text", prepare_history_text)
+    workflow.add_node("prepare_template_fields", prepare_template_fields)
+    workflow.add_node("render_template", render_template)
+    
     def tutor_finalize_node(state: TutorState) -> TutorState:
         print("DEBUG entered tutor_finalize_node", flush=True)
         state["draft_response"] = (state.get("tutor_raw_output") or "").strip()
@@ -462,7 +523,30 @@ async def run(
         "grade_answer": "grade_answer",
     })
 
-    workflow.add_edge("tutor", "tutor_reasoning")
+    # workflow.add_edge("tutor", "tutor_reasoning")
+    def route_after_tutor(state: TutorState) -> Literal["prepare_prompt_list", "tutor_reasoning"]:
+        doc_ids = state.get("document_ids") or []
+        if isinstance(doc_ids, list) and len(doc_ids) > 0:
+            return "prepare_prompt_list"
+        return "tutor_reasoning"
+    # workflow.add_edge("tutor", "prepare_prompt_list")
+    workflow.add_conditional_edges(
+        "tutor",
+        route_after_tutor,
+        {
+            "prepare_prompt_list": "prepare_prompt_list",
+            "tutor_reasoning": "tutor_reasoning",
+        },
+    )
+    workflow.add_edge("prepare_prompt_list", "embedding")
+    workflow.add_edge("embedding", "prepare_query_embedding")
+    workflow.add_edge("prepare_query_embedding", "search_vectors")
+    workflow.add_edge("search_vectors", "retrieve_chunks")
+    workflow.add_edge("retrieve_chunks", "prepare_history_text")
+    workflow.add_edge("prepare_history_text", "prepare_template_fields")
+    workflow.add_edge("prepare_template_fields", "render_template")
+    workflow.add_edge("render_template", "tutor_reasoning")
+    
     workflow.add_edge("tutor_reasoning", "tutor_finalize")
 
     for n in ["lesson","progress", "tutor_finalize"]:  # "tutor","quiz",
@@ -475,9 +559,15 @@ async def run(
     
     print("HELLO I AM HERE", flush=True)
     
-    out = await app.ainvoke(initial_state, config=config)
-    print("DEBUG post-router response_type =", out.get("response_type"), flush=True)
-    
+    #out = await app.ainvoke(initial_state, config=config)
+    #print("DEBUG post-router response_type =", out.get("response_type"), flush=True)
+    try:
+        out = await app.ainvoke(initial_state, config=config)
+        print("DEBUG post-router response_type =", out.get("response_type"), flush=True)
+    except Exception as e:
+        print("DEBUG app.ainvoke EXCEPTION =", repr(e), flush=True)
+        raise
+        
     # insertion #######
     if out.get("response_type") == "grade_answer":
         out = analyze_and_update_state(user_text, out)
@@ -549,6 +639,7 @@ async def run(
     history = list(out.get("history", []))
     history.append({"role": "assistant", "content": out.get("draft_response", "")})
     out["history"] = history
+    out["messages"] = history
 
     print("DEBUG tutor out =", out, flush=True)
     yield {
@@ -575,6 +666,17 @@ async def run(
                 "last_check_question_id": out.get("last_check_question_id"),
                 "asked_question_ids": out.get("asked_question_ids", []),
                 "history": out.get("history", []),
+                
+                "document_ids": out.get("document_ids", []),
+                "extractor": out.get("extractor"),
+                "method": out.get("method"),
+                "embedding_space": out.get("embedding_space"),
+                "top_k": out.get("top_k", 10),
+                "chunk_texts": out.get("chunk_texts", []),
+                "search_vectors_response": out.get("search_vectors_response", {}),
+                "retrieve_chunks_response": out.get("retrieve_chunks_response", {}),
+                "final_prompt": out.get("final_prompt", ""),
+                "user_text": out.get("user_text", ""),
             },
         }
 
