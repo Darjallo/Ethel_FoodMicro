@@ -188,6 +188,9 @@ class Chunk(SQLModel, table=True):
     )
     text: str
     position: int
+    
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
 
     chunk_set: ChunkSet = Relationship(back_populates="chunks")
 

@@ -47,8 +47,6 @@ class TutorState(TypedDict, total=False):
     
     retrieve_chunks_response: dict
     chunk_texts: list[str]
-    chunk_metadata: list[Dict[str, Any]]
-    source_labels: list[str]
     
     history_text: str
     template_fields: dict

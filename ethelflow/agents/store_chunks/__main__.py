@@ -22,6 +22,15 @@ async def store_chunks(req: StoreChunksRequest, session: AsyncSession = Depends(
         len(req.chunks),
         req.replace,
     )
+    
+    if req.chunk_metadata and len(req.chunk_metadata) != len(req.chunks):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "chunk_metadata length must match chunks length: "
+                f"{len(req.chunk_metadata)} metadata records for {len(req.chunks)} chunks"
+            ),
+        )
 
     try:
         async with session.begin():
@@ -63,10 +72,31 @@ async def store_chunks(req: StoreChunksRequest, session: AsyncSession = Depends(
             await session.execute(sa.delete(Chunk).where(Chunk.chunk_set_id == chunk_set.id))
             await session.flush()
 
-            new_chunks = [
-                Chunk(chunk_set_id=chunk_set.id, text=chunk_text, position=i)
-                for i, chunk_text in enumerate(req.chunks)
-            ]
+            # new_chunks = [
+            #     Chunk(chunk_set_id=chunk_set.id, text=chunk_text, position=i)
+            #     for i, chunk_text in enumerate(req.chunks)
+            # ]
+            
+            new_chunks = []
+
+            for i, chunk_text in enumerate(req.chunks):
+                meta = {}
+            
+                if isinstance(req.chunk_metadata, list) and i < len(req.chunk_metadata):
+                    maybe_meta = req.chunk_metadata[i]
+                    if isinstance(maybe_meta, dict):
+                        meta = maybe_meta
+            
+                new_chunks.append(
+                    Chunk(
+                        chunk_set_id=chunk_set.id,
+                        text=chunk_text,
+                        position=i,
+                        page_start=meta.get("page_start"),
+                        page_end=meta.get("page_end"),
+                    )
+                )
+            
             session.add_all(new_chunks)
             await session.flush()  # assigns chunk ids
 

@@ -257,7 +257,7 @@ async def run(
       - template_path (str)            [inside container]
       - template (str)                [inline template text; overrides template_path]
       - extractor (default "file_to_text")
-      - method (default "recursive_char_1000_100_htmlstrip")
+      - method (default "recursive_char_1000_100_pageaware")
       - embedding_space (default None => catalog tenant default)
       - top_k (default 10)
       - reasoning_effort (optional)
@@ -277,7 +277,7 @@ async def run(
         "template": context.get("template"),
 
         "extractor": context.get("extractor", "file_to_text"),
-        "method": context.get("method", "recursive_char_1000_100_htmlstrip"),
+        "method": context.get("method", "recursive_char_1000_100_pageaware"),
         "embedding_space": context.get("embedding_space"),
         "top_k": int(context.get("top_k", 10)),
         "reasoning_effort": context.get("reasoning_effort"),

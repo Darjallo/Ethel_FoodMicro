@@ -59,6 +59,8 @@ def upgrade() -> None:
         sa.Column("chunk_set_id", sa.Uuid(), nullable=False),
         sa.Column("text", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("position", sa.Integer(), nullable=False),
+        sa.Column("page_start", sa.Integer(), nullable=True),
+        sa.Column("page_end", sa.Integer(), nullable=True),
         sa.ForeignKeyConstraint(
             ["chunk_set_id"],
             ["chunksets.id"],

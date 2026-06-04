@@ -30,6 +30,7 @@ def retrieve_chunks_node(
     tenant_key: str = "tenant",
     output_key: str = "retrieve_chunks_response",
     output_texts_key: str = "chunk_texts",
+    output_metadata_key: str = "chunk_metadata",
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         tenant = state.get(tenant_key)
@@ -58,6 +59,7 @@ def retrieve_chunks_node(
         yield {
             output_key: data.model_dump(mode="json"),
             output_texts_key: list(data.chunk_texts),
+            output_metadata_key: list(data.chunk_metadata),
         }
 
     return node

@@ -146,7 +146,7 @@ async def run(
             
             document_ids = rag.get("document_ids", context.get("document_ids", [])),
             extractor = rag.get("extractor", context.get("extractor", "file_to_text")),
-            method = rag.get("method", context.get("method", "recursive_char_1000_100_htmlstrip")),
+            method = rag.get("method", context.get("method", "recursive_char_1000_100_pageaware")),
             embedding_space = rag.get("embedding_space", context.get("embedding_space")),
             top_k = int(rag.get("top_k", context.get("top_k", 10))),
             template=context.get("template"),
@@ -470,6 +470,7 @@ async def run(
             tenant_key="tenant",
             output_key="retrieve_chunks_response",
             output_texts_key="chunk_texts",
+            output_metadata_key="chunk_metadata",
         ),
     )
     

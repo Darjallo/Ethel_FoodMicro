@@ -1,31 +1,14 @@
-from typing import Any, AsyncGenerator, Callable, Dict
-import uuid
+from __future__ import annotations
 
+from typing import Any, AsyncGenerator, Callable, Dict
 import aiohttp
-import os
 
 from ethelflow.agents.store_chunks.models import StoreChunksRequest, StoreChunksResponse
 
-# STORE_CHUNKS_URL: str = "http://store-chunks.default.svc:8000/store_chunks"
-STORE_CHUNKS_URL: str = "http://store-chunks:8000/store_chunks"
-
-def _as_uuid(val: Any, field_name: str) -> uuid.UUID:
-    if isinstance(val, uuid.UUID):
-        return val
-    if val is None:
-        raise ValueError(f"{field_name} is required")
-    try:
-        return uuid.UUID(str(val))
-    except Exception as e:
-        raise ValueError(f"Invalid UUID format for {field_name}: {val!r}") from e
-
-
-def _as_bool(val: Any, default: bool = True) -> bool:
-    if val is None:
-        return default
-    if isinstance(val, bool):
-        return val
-    return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
+# In-cluster service URL.
+# If your Kubernetes service name/namespace differs, adjust this value.
+# Alternative example: "http://store-chunks.default.svc:8000/store_chunks"
+STORE_CHUNKS_URL = "http://store-chunks:8000/store_chunks"
 
 
 def store_chunks_node(
@@ -33,39 +16,73 @@ def store_chunks_node(
     chunks_key: str = "chunks",
     method_key: str = "method",
     output_key: str = "store_chunks_response",
-    replace_key: str = "replace",
+    chunk_metadata_key: str = "chunk_metadata",
 ) -> Callable[[Dict[str, Any]], AsyncGenerator[Dict[str, Any], None]]:
+    """
+    LangGraph node adapter for the store-chunks microservice.
+
+    This version is page/source-metadata aware. It reads a list of chunk texts
+    from `state[chunks_key]` and, optionally, a list of metadata dictionaries
+    from `state[chunk_metadata_key]`. The metadata list must be aligned with
+    the chunks list by index:
+
+        chunks[i] <-> chunk_metadata[i]
+
+    Typical metadata example:
+        {
+            "document_id": "...",
+            "document_name": "bovine_udder.pdf",
+            "content_type": "application/pdf",
+            "page_start": 3,
+            "page_end": 3,
+            "chunk_index_on_page": 0,
+            "chunking_method": "recursive_char_1000_100_pageaware"
+        }
+
+    Requires the StoreChunksRequest model and the store-chunks service to support
+    an optional `chunk_metadata: list[dict]` field.
+    """
+
     async def node(state: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
-        text_id = _as_uuid(state.get(text_id_key), text_id_key)
+        chunks = state.get(chunks_key, [])
+        if not isinstance(chunks, list):
+            raise ValueError(f"Expected list for {chunks_key}, got {type(chunks)}")
 
-        chunks = state.get(chunks_key)
-        if not isinstance(chunks, list) or not all(isinstance(c, str) for c in chunks):
-            raise ValueError(f"Expected list[str] for {chunks_key}, got {type(chunks)}")
+        # Metadata is optional for backward compatibility with non-page-aware flows.
+        metadata = state.get(chunk_metadata_key, [])
+        if metadata is None:
+            metadata = []
+        if not isinstance(metadata, list):
+            raise ValueError(
+                f"Expected list for {chunk_metadata_key}, got {type(metadata)}"
+            )
+        if metadata and len(metadata) != len(chunks):
+            raise ValueError(
+                "chunk metadata length mismatch: "
+                f"{len(metadata)} metadata records for {len(chunks)} chunks"
+            )
 
-        method = state.get(method_key)
-        if not isinstance(method, str) or not method.strip():
-            raise ValueError(f"Expected non-empty str for {method_key}, got {method!r}")
-
-        replace = _as_bool(state.get(replace_key), default=True)
-
-        req = StoreChunksRequest(text_id=text_id, chunks=chunks, method=method, replace=replace)
+        req = StoreChunksRequest(
+            text_id=state.get(text_id_key),
+            chunks=chunks,
+            method=state.get(method_key),
+            chunk_metadata=metadata,
+        )
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 STORE_CHUNKS_URL,
                 json=req.model_dump(mode="json"),
-                timeout=60,
+                timeout=300,
             ) as resp:
-                payload = await resp.json()
+                payload_text = await resp.text()
                 if resp.status != 200:
-                    raise ValueError(f"store_chunks HTTP {resp.status}: {payload}")
+                    raise ValueError(
+                        f"store-chunks HTTP {resp.status}: {payload_text}"
+                    )
+                payload = await resp.json()
 
         data = StoreChunksResponse.model_validate(payload)
-        if not data.success:
-            raise ValueError(f"store_chunks failed: {data.message}")
-
-        # Keep state JSON-friendly (UUIDs as strings)
         yield {output_key: data.model_dump(mode="json")}
 
     return node
-

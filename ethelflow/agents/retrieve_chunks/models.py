@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Any, Dict
 import uuid
 from pydantic import BaseModel, Field
 
@@ -15,4 +15,5 @@ class RetrieveChunksResponse(BaseModel):
     message: str = ""
     chunk_ids: List[uuid.UUID] = Field(default_factory=list)
     chunk_texts: List[str] = Field(default_factory=list)
+    chunk_metadata: List[Dict[str, Any]] = Field(default_factory=list)
 
